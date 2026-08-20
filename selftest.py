@@ -615,6 +615,33 @@ def main():
     check("대신 로그로 알린다", "균등 배치합니다" in _seg)
     check("쓰지 않는 _ask 제거됨", "def _ask(" not in gui_src)
 
+    # `#763 아빠? / 마야?` — 번호 없는 줄을 밑에 붙이면 그 줄이 앞 큐 구간에
+    # 같이 뜨고 뒤 큐 장면은 통째로 빠진다. 전에는 경고 0건으로 조용했다.
+    _one = next(c for c in cues if len(c["lines"]) == 1 and c["src_no"] > 460)
+    _nxt = next(c for c in cues if c["src_no"] == _one["src_no"] + 1)
+    _two = next(c for c in cues if len(c["lines"]) == 2 and c["src_no"] > 460)
+    def _mk(body, a_, b_):
+        h = "[%s ~ %s]" % (subtitle.hms(a_ - 2), subtitle.hms(b_ + 2))
+        return script_io.read("제목\n\n" + h + "\n\n" + body, cues,
+                              log=lambda *_: None)
+    _bad = _mk("#%d 아빠?\n마야?" % _one["src_no"],
+               _one["start_s"], _nxt["end_s"])
+    _sep = _mk("#%d 아빠?\n\n#%d 마야?" % (_one["src_no"], _nxt["src_no"]),
+               _one["start_s"], _nxt["end_s"])
+    _rng = _mk("#%d-%d 아빠?\n마야?" % (_one["src_no"], _nxt["src_no"]),
+               _one["start_s"], _nxt["end_s"])
+    _2ln = _mk("#%d %s\n%s" % (_two["src_no"], _two["lines"][0], _two["lines"][1]),
+               _two["start_s"], _two["end_s"])
+    eq("번호 없는 줄을 붙이면 잡는다", _bad["stats"]["overstuffed"], 1)
+    eq("큐마다 번호를 달면 조용", _sep["stats"]["overstuffed"], 0)
+    eq("#a-b 범위는 조용", _rng["stats"]["overstuffed"], 0)
+    eq("2줄짜리 큐에 2줄은 조용", _2ln["stats"]["overstuffed"], 0)
+    # 실제 피해: 뒤 큐 장면이 빠져 컷이 짧아진다
+    _pb = layout.build(_bad, cues, 6159.104, fps=24.0, log=lambda *_: None)
+    _ps = layout.build(_sep, cues, 6159.104, fps=24.0, log=lambda *_: None)
+    check("붙여 쓰면 실제로 짧아진다", _pb["total_s"] < _ps["total_s"] - 1.0,
+          "%.2f초 vs %.2f초" % (_pb["total_s"], _ps["total_s"]))
+
     check("정상 출력은 오판하지 않는다",
           not sg._looks_read_only("대본을 다 썼습니다. 총 172초 · 블록 9개."))
     check("쓰지 않는 results_dir 제거됨", not hasattr(pipeline, "results_dir"))

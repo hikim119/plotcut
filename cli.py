@@ -217,6 +217,19 @@ def cmd_check(a):
             if it["kind"] == "dialogue" and not it["cues"]:
                 print("    ✘ 블록%d  %s" % (bi + 1, it["text"][:44]))
 
+    # `#763 아빠? / 마야?` 처럼 번호를 안 붙인 줄을 밑에 붙이면, 그 줄이 앞 큐
+    # 구간에 같이 뜨고 뒤 큐 장면은 통째로 사라진다 (실측 4.17초 → 2.24초).
+    if st.get("overstuffed"):
+        errors.append(
+            "번호 없는 줄을 붙인 문단 %d개 — 그 자막의 장면이 통째로 빠집니다. "
+            "줄마다 번호를 달아 문단을 나누세요." % st["overstuffed"])
+        for bi, it in script_io.items(doc):
+            ref = it.get("cue_ref")
+            if ref and it.get("cues") and \
+                    len(it["lines"]) > sum(len(c["lines"]) for c in it["cues"]):
+                print("    ✘ 블록%d  #%d  %s"
+                      % (bi + 1, ref[0], " / ".join(it["lines"])[:40]))
+
     # 헤더 앞뒤에 빈 줄을 안 넣으면 헤더가 바로 앞 문단에 먹혀 들어간다.
     # 탭에서 직접 고칠 때 자주 나오는데 증상만 봐선 원인을 알 수 없다 —
     # 나레이션에 먹히면 그 블록이 통째로 사라지고 **엉뚱한 문단들이** 강등된다.

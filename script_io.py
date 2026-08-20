@@ -347,7 +347,8 @@ def _pick(cands, prev_idx):
 
 def _match_all(blocks, cues, warnings, log):
     stats = {"dialogue": 0, "by_sig": 0, "by_merge": 0, "by_diff": 0,
-             "by_ref": 0, "by_time": 0, "demoted": 0, "ambiguous": 0, "reused": 0}
+             "by_ref": 0, "by_time": 0, "demoted": 0, "ambiguous": 0,
+             "reused": 0, "overstuffed": 0}
     seen_global = {}
     for bi, blk in enumerate(blocks):
         pool = _pool(cues, blk["win"])
@@ -379,6 +380,20 @@ def _match_all(blocks, cues, warnings, log):
                         % (bi + 1, a if a == b else "%d-%d" % (a, b),
                            it["text"][:30]))
                     continue
+                # 문단이 큐보다 줄이 많으면 **번호를 안 붙인 다음 큐를 삼킨** 것이다.
+                #   #763 아빠?     ← 763 은 한 줄짜리인데
+                #   마야?          ← 이건 사실 764 다
+                # 이러면 764 시각이 통째로 버려지고(그 장면이 안 나온다) 두 줄이
+                # 763 구간에 한꺼번에 뜬다. 실측: 컷 4.17초 → 2.24초, 경고 0건.
+                want = sum(len(c["lines"]) for c in run)
+                if len(it["lines"]) > want:
+                    stats["overstuffed"] += 1
+                    warnings.append(
+                        "블록%d SRT#%s 는 %d줄인데 문단이 %d줄입니다 — "
+                        "다음 자막을 번호 없이 붙인 것 같습니다. "
+                        "줄마다 번호를 달아 문단을 나누세요: %r"
+                        % (bi + 1, a if a == b else "%d-%d" % (a, b),
+                           want, len(it["lines"]), " / ".join(it["lines"])[:40]))
                 it["cues"] = run
                 it["note"] = "번호"
                 stats["by_ref"] += 1
