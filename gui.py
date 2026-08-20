@@ -22,7 +22,6 @@ if sys.platform == "win32":
     subprocess.Popen = _NoCWindowPopen
 
 import os                                                   # noqa: E402
-import queue                                                # noqa: E402
 import re                                                   # noqa: E402
 import threading                                            # noqa: E402
 import time                                                 # noqa: E402
@@ -119,7 +118,6 @@ class App:
         self.labels = {}
         self._stop = threading.Event()
         self._busy = False
-        self._ask_q = queue.Queue()
         self.name_var = tk.StringVar()
         self.canvas_ko = tk.StringVar(value=CANVAS_KO[0])
         self.offset_var = tk.DoubleVar(value=0.0)
@@ -526,16 +524,11 @@ class App:
         if self._busy:
             return
         # 자막은 시각의 출처다. 대본에 시각이 박혀 있으면(`@…~…`) 없어도 되고,
-        # 둘 다 없으면 블록 범위에 균등 배치된다 — 물어보고 진행한다.
+        # 둘 다 없으면 블록 범위에 균등 배치된다. **팝업으로 묻지 않는다** —
+        # 막을 일이 아니라 알려 줄 일인데, 팝업이 뜨면 오류처럼 보인다.
         if not self.paths.get("srt") and not self._script_has_spans():
-            if not messagebox.askyesno(
-                    "영화 자막 없음",
-                    "영화 자막이 없습니다.\n\n"
-                    "대본에는 '무엇을 보여줄지'만 있고 '언제'는 없어서,\n"
-                    "컷이 블록 범위에 균등 배치됩니다.\n"
-                    "(대사가 나오는 순간과 어긋납니다)\n\n"
-                    "그래도 만들까요?"):
-                return
+            self._log("영화 자막이 없어 컷을 블록 범위에 균등 배치합니다 "
+                      "— 대사가 나오는 순간과는 어긋납니다.")
         try:
             secs = float(self.secs_var.get())
         except ValueError:
@@ -676,12 +669,6 @@ class App:
         self.prog_lbl.configure(
             text="%s   %d%%   %d:%02d 경과" % (self._step, pct, el // 60, el % 60))
         self.root.after(200, self._tick)
-
-    def _ask(self, msg):
-        def do():
-            self._ask_q.put(messagebox.askyesno("확인", msg))
-        self.root.after(0, do)
-        return self._ask_q.get()
 
     def _set_script(self, text):
         def do():

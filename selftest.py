@@ -590,6 +590,31 @@ def main():
           sg._looks_read_only("현재 세션이 읽기 전용이라 파일 생성이 차단됐습니다"))
     check("permission denied 도 알아본다",
           sg._looks_read_only("EACCES: permission denied, open 'draft.txt'"))
+    # 자막을 안 넣은 건 "못 찾은" 게 아니다 — 문단마다 ⚠ 를 뿌리면
+    # 대본이 틀린 것처럼 보인다 (GUI 팝업을 없앤 것과 같은 이유).
+    plain_txt = "\n\n".join([
+        "제목", "[00:10:00 ~ 00:10:40]", "우리 집에서 뭐 해요?",
+        "(그렇게 시작됐는데)", "편지 안 가져가요?"])
+    d_no = script_io.read(plain_txt, [], log=lambda *_: None)
+    d_yes = script_io.read(plain_txt, cues, log=lambda *_: None)
+    eq("자막 없으면 '못 찾음' 경고 0건",
+       sum(1 for w in d_no["warnings"] if "찾지 못했" in w), 0)
+    check("그래도 강등 수는 센다", d_no["stats"]["demoted"] > 0)
+    check("자막을 넣으면 경고는 그대로",
+          any("찾지 못했" in w for w in d_yes["warnings"])
+          or d_yes["stats"]["demoted"] == 0)
+
+    # 자막 없는 빌드는 팝업으로 막지 않는다 — 로그로만 알린다
+    gui_src = (ROOT / "gui.py").read_text(encoding="utf-8")
+    import ast
+    _cls = next(n for n in ast.parse(gui_src).body if isinstance(n, ast.ClassDef))
+    _fn = next(n for n in _cls.body
+               if isinstance(n, ast.FunctionDef) and n.name == "_do_build")
+    _seg = ast.get_source_segment(gui_src, _fn)
+    check("_do_build 에 팝업 없음", "messagebox" not in _seg)
+    check("대신 로그로 알린다", "균등 배치합니다" in _seg)
+    check("쓰지 않는 _ask 제거됨", "def _ask(" not in gui_src)
+
     check("정상 출력은 오판하지 않는다",
           not sg._looks_read_only("대본을 다 썼습니다. 총 172초 · 블록 9개."))
     check("쓰지 않는 results_dir 제거됨", not hasattr(pipeline, "results_dir"))

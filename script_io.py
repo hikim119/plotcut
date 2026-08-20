@@ -393,9 +393,13 @@ def _match_all(blocks, cues, warnings, log):
                 it["demoted"] = True
                 it["note"] = "매칭 실패"
                 stats["demoted"] += 1
-                warnings.append(
-                    "블록%d %s — 자막에서 찾지 못했습니다: %r"
-                    % (bi + 1, blk["header"] or "(헤더 없음)", it["text"][:34]))
+                # 자막을 아예 안 넣은 경우는 "못 찾은" 게 아니라 찾을 데가
+                # 없는 것이다. 문단마다 ⚠ 를 뿌리면 대본이 틀린 것처럼 보인다 —
+                # 이때는 pipeline 이 "균등 배치합니다" 한 줄로 이미 알려 준다.
+                if cues:
+                    warnings.append(
+                        "블록%d %s — 자막에서 찾지 못했습니다: %r"
+                        % (bi + 1, blk["header"] or "(헤더 없음)", it["text"][:34]))
                 continue
             if len(cands) > 1:
                 stats["ambiguous"] += 1
