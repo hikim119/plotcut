@@ -159,9 +159,22 @@ def main():
     eq("영상 구간 48개", st["cuts"], 48)
     # 자막은 블록마다 위로 쌓인다 — 줄이 하나 늘 때마다 화면을 통째로 다시 깔아
     # 세그먼트가 늘어난다. 서로 다른 자막(내용) 수는 그대로여야 한다.
-    eq("서로 다른 자막 71개 (대사 51 + 나레이션 19 + 제목 1)",
-       len({(tuple(x["lines"]), x["kind"]) for x in pl["subs"]}), 71)
-    eq("쌓아서 만든 세그먼트 205개", st["subs"], 205)
+    eq("자막 71개 (대사 51 + 나레이션 19 + 제목 1)", st["subs"], 71)
+    # 대사에는 시작과 끝이 있다. 끝났는데도 남겨 두면 같은 글자가 뒤에 또 나온다.
+    _seen = {}
+    for x in pl["subs"]:
+        _k = (tuple(x["lines"]), x["bi"], x["kind"])
+        _seen[_k] = _seen.get(_k, 0) + 1
+    eq("같은 자막이 두 번 나오지 않는다", sum(1 for v in _seen.values() if v > 1), 0)
+    # 한 번에 하나만 뜬다 → 트랙 하나로 들어간다
+    _ev = sorted([(x["t_start"], 1) for x in pl["subs"] if x["kind"] != "title"]
+                 + [(x["t_start"] + x["t_dur"], -1) for x in pl["subs"]
+                    if x["kind"] != "title"])
+    _n, _mx = 0, 0
+    for _t, _d in _ev:
+        _n += _d
+        _mx = max(_mx, _n)
+    eq("동시에 뜨는 자막은 하나뿐", _mx, 1)
     eq("줄 자리 8칸", 1 + max(x.get("row", 0) for x in pl["subs"]), 8)
     # 같은 줄끼리 시간이 겹치면 CapCut 이 "세그먼트가 겹칩니다" 로 죽는다
     _ov = 0
@@ -293,10 +306,8 @@ def main():
         p7, {"path": r"C:\없는영화.mp4", "width": 1920, "height": 1080,
              "duration_s": 6159.104, "fps": 24.0},
         "vertical", "fit", None, None, None, log=lambda *_: None)
-    _rows7 = 1 + max((x.get("row", 0) for x in p7["subs"]
-                      if x["kind"] != "title"), default=0)
-    eq("⑦ CapCut 조립 성공 — 자막 트랙 = 줄 자리 + 제목",
-       tl7["track_counts"]["text"], _rows7 + 1)
+    eq("⑦ CapCut 조립 성공 — 자막 트랙 2개(자막·제목)",
+       tl7["track_counts"]["text"], 2)
 
     print("\n[9] 대본 생성기 — 실패해도 기존 대본을 지우지 말 것")
     import script_gen

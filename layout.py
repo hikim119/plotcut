@@ -293,21 +293,25 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
             tr = (it.get("trans")
                   or (list(it["lines"])
                       if (it.get("cue_ref") or it.get("span")) else None))
+            # 자막은 **한 줄이 한 칸**을 차지한다. 두 줄짜리 큐를 카드 하나로
+            # 띄우면 그 칸만 두 배 높아져 줄 간격이 들쭉날쭉해진다.
+            # 같은 시각에 시작하므로 두 줄이 함께 떴다가 함께 밀려 올라간다.
             if tr:
-                # 번역이 붙은 문단은 **한 장으로** 띄운다. 큐마다 쪼개면
-                # 번역 몇 줄을 어느 큐에 줄지 정할 근거가 없다.
                 # 시각 앵커면 자막 큐가 아예 없다 — 구간 시작에 띄운다
                 c0 = it["cues"][0] if it["cues"] else None
                 at = max(u["src0"], c0["start_s"]) if c0 else u["src0"]
-                subs.append({"t_start": t_at(p, at),
-                             "lines": list(tr), "kind": "dialogue",
-                             "bi": u["bi"],
-                             "src_no": c0["src_no"] if c0 else None})
+                for ln in tr:
+                    subs.append({"t_start": t_at(p, at),
+                                 "lines": [ln], "kind": "dialogue",
+                                 "bi": u["bi"],
+                                 "src_no": c0["src_no"] if c0 else None})
             else:
                 for c in it["cues"]:
-                    subs.append({"t_start": t_at(p, max(u["src0"], c["start_s"])),
-                                 "lines": list(c["lines"]), "kind": "dialogue",
-                                 "bi": u["bi"], "src_no": c["src_no"]})
+                    at = t_at(p, max(u["src0"], c["start_s"]))
+                    for ln in c["lines"]:
+                        subs.append({"t_start": at, "lines": [ln],
+                                     "kind": "dialogue",
+                                     "bi": u["bi"], "src_no": c["src_no"]})
         else:
             subs.append({"t_start": t_at(p, u["src0"]),
                          "lines": [it["text"]], "kind": "narration",
@@ -400,38 +404,33 @@ def _hms(sec):
 
 
 def _stack(subs, total, min_seg):
-    """블록 안의 자막을 **쌓는다.**
+    """자막마다 **자기 구간에 딱 한 번**. 블록 안 순서대로 줄 자리를 옮겨 간다.
 
-    앞 줄이 사라지지 않고 남은 채로 새 줄이 아래에 붙는다. CapCut 세그먼트는
-    한 번 놓이면 위치를 못 바꾸므로, 줄이 하나 늘 때마다 **그 시점의 화면 상태**를
-    통째로 다시 깐다. 문단 N개짜리 블록이면 N(N+1)/2 개 세그먼트가 된다.
+    대사에는 시작과 끝이 있다. 끝났는데도 화면에 남겨 두면 같은 글자가 뒤에
+    또 나오고, 편집 화면에서는 조각이 여러 트랙에 흩어진다. 그러니 다음 자막이
+    나오면 앞 자막은 **지운다.**
 
-    row 는 **맨 아래가 0**, 위로 갈수록 커진다. 같은 row 끼리는 시간이 안 겹쳐서
-    CapCut 트랙 하나에 그대로 들어간다.
+    row 는 블록 안 순서다 — 첫 자막이 0(맨 아래), 다음이 1, … 블록이 바뀌면
+    다시 0부터. 같은 row 끼리는 시간이 안 겹쳐 CapCut 트랙 하나에 들어간다.
+
+    길이는 **다음 자막이 나올 때까지**다. 대사가 끝나는 순간 지우면 컷 사이에
+    자막 없는 구간이 생겨 화면이 휑해진다.
     """
     out = []
-    i = 0
-    while i < len(subs):
-        bi = subs[i]["bi"]
-        j = i
-        while j < len(subs) and subs[j]["bi"] == bi:
-            j += 1
-        blk = subs[i:j]
-        # 이 블록의 자막이 사라지는 시각 = 다음 블록 첫 자막, 없으면 영상 끝
-        blk_end = subs[j]["t_start"] if j < len(subs) else total
-        blk_end = min(blk_end, total)
-        for s_i in range(len(blk)):
-            t0 = blk[s_i]["t_start"]
-            t1 = blk[s_i + 1]["t_start"] if s_i + 1 < len(blk) else blk_end
-            dur = min(t1, total) - t0
-            if dur < min_seg:
-                # 1프레임을 못 채우는 상태는 화면에 보이지도 않는다 — 건너뛴다.
-                # (남기면 CapCut 이 못 받는 세그먼트가 된다)
-                continue
-            lo = max(0, s_i - SUB_ROWS_MAX + 1)
-            for k in range(lo, s_i + 1):
-                out.append(dict(blk[k], t_start=t0, t_dur=dur, row=s_i - k))
-        i = j
+    for i, s in enumerate(subs):
+        t0 = s["t_start"]
+        t1 = subs[i + 1]["t_start"] if i + 1 < len(subs) else total
+        dur = min(t1, total) - t0
+        if dur < min_seg:
+            # 1프레임을 못 채우면 화면에 보이지도 않고 CapCut 이 받지도 않는다
+            continue
+        # 블록 안에서 몇 번째인가 = 줄 자리
+        row = 0
+        for k in range(i - 1, -1, -1):
+            if subs[k]["bi"] != s["bi"]:
+                break
+            row += 1
+        out.append(dict(s, t_start=t0, t_dur=dur, row=min(row, SUB_ROWS_MAX - 1)))
     return out
 
 
