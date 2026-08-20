@@ -642,6 +642,49 @@ def main():
     check("붙여 쓰면 실제로 짧아진다", _pb["total_s"] < _ps["total_s"] - 1.0,
           "%.2f초 vs %.2f초" % (_pb["total_s"], _ps["total_s"]))
 
+    # 시각 박기를 하면 write 가 `#461 @00:52:01.59~… 아빠?` 로 쓴다.
+    # read 가 시각을 먼저 보면 `#` 로 시작하는 줄에서 매칭이 안 돼 시각을
+    # 통째로 놓치고, `@…` 가 대사 텍스트에 섞여 들어간다 (자막 없이 못 연다).
+    _fz = _mk("#%d 아빠?\n\n#%d 마야?" % (_one["src_no"], _nxt["src_no"]),
+              _one["start_s"], _nxt["end_s"])
+    _pf = layout.build(_fz, cues, 6159.104, fps=24.0, log=lambda *_: None)
+    layout.apply_headers(_fz, _pf["headers"])
+    layout.apply_spans(_fz, _pf)
+    _out = script_io.write(_fz)
+    check("번호와 시각이 같이 쓰인다", "#%d @" % _one["src_no"] in _out, _out[:60])
+    _back = script_io.read(_out, [], log=lambda *_: None)      # 자막 없이
+    _dl = [it for _, it in script_io.items(_back) if it["kind"] == "dialogue"]
+    check("자막 없이도 시각을 읽는다", all(it["span"] for it in _dl))
+    check("번호도 살아 있다", all(it["cue_ref"] for it in _dl))
+    check("텍스트에 @ 가 안 섞인다", all("@" not in it["text"] for it in _dl))
+    eq("자막 없이 읽어도 강등 0", sum(1 for it in _dl if it["demoted"]), 0)
+    eq("번호+시각도 왕복 고정점",
+       script_io.write(script_io.read(_out, [], log=lambda *_: None)), _out)
+
+    # 가까운 두 큐 사이에 나레이션을 넣으면 조각이 서로 겹친다.
+    # 음소거를 끄면 볼륨이 같아 대사와 합쳐지고, 합친 조각을 되감기 검사가
+    # "대사→대사"로 오판해 죽었다 (실측 708쌍 중 43건).
+    # 음소거를 켜면 자르는 위치가 1프레임을 못 채워 죽었다 (12건).
+    _near = [k for k in range(len(cues) - 1)
+             if 0 <= cues[k + 1]["start_s"] - cues[k]["end_s"] < 3.0]
+    check("3초 미만 간격이 실제로 흔하다", len(_near) > 500, str(len(_near)))
+    for _m in (True, False):
+        _bad = 0
+        for k in _near[::37]:
+            _a, _b = cues[k], cues[k + 1]
+            _h = "[%s ~ %s]" % (subtitle.hms(_a["start_s"] - 3),
+                                subtitle.hms(_b["end_s"] + 3))
+            _t = ("제목\n\n" + _h + "\n\n" + _a["text"] +
+                  "\n\n(그 사이에 무슨 일이 있었냐면)\n\n" + _b["text"])
+            try:
+                layout.build(script_io.read(_t, cues, log=lambda *_: None), cues,
+                             6159.104, fps=24.0, mute_under_narration=_m,
+                             log=lambda *_: None)
+            except Exception:
+                _bad += 1
+        eq("나레이션을 대사 사이에 넣어도 안 죽는다 (음소거 %s)"
+           % ("켬" if _m else "끔"), _bad, 0)
+
     check("정상 출력은 오판하지 않는다",
           not sg._looks_read_only("대본을 다 썼습니다. 총 172초 · 블록 9개."))
     check("쓰지 않는 results_dir 제거됨", not hasattr(pipeline, "results_dir"))

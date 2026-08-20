@@ -195,14 +195,29 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
             pieces.append(_piece(u, u["src0"], u["src1"], 1.0, kind, ""))
             continue
         it["intruded"] = True
-        cut = u["src0"]
+        # 자르는 위치를 그대로 쓰면 1프레임보다 짧은 조각이 나온다 —
+        # CapCut 은 그런 세그먼트를 못 받는다(실측: 708쌍 중 12건이
+        # "구간이 1프레임보다 짧습니다: 0.0235초" 로 죽었다).
+        # 조각이 한 프레임을 못 채우면 그 경계를 아예 버려 앞뒤와 합친다.
+        bounds = [u["src0"]]
         for a, b in spans:
-            if a - cut > 1e-6:
-                pieces.append(_piece(u, cut, a, 1.0, kind, ""))
-            pieces.append(_piece(u, max(cut, a), b, NARR_DUCK_VOLUME, kind, "음소거"))
-            cut = b
-        if u["src1"] - cut > 1e-6:
-            pieces.append(_piece(u, cut, u["src1"], 1.0, kind, ""))
+            bounds += [max(u["src0"], a), min(u["src1"], b)]
+        bounds.append(u["src1"])
+        keep = [bounds[0]]
+        for x in bounds[1:]:
+            if x - keep[-1] >= min_seg - 1e-9:
+                keep.append(x)
+        keep[-1] = u["src1"]
+        if len(keep) < 2 or keep[1] - keep[0] < min_seg - 1e-9:
+            pieces.append(_piece(u, u["src0"], u["src1"], 1.0, kind, ""))
+            continue
+        for i in range(len(keep) - 1):
+            a, b = keep[i], keep[i + 1]
+            mid = (a + b) / 2.0
+            muted = any(s <= mid < e for s, e in spans)
+            pieces.append(_piece(u, a, b,
+                                 NARR_DUCK_VOLUME if muted else 1.0,
+                                 kind, "음소거" if muted else ""))
 
     # ── 4. 인접 소스 잇기 ───────────────────────────────────────────────
     segs = []
@@ -217,7 +232,8 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
                 forward = (prev.get("cue_to") is not None
                            and p.get("cue_from") is not None
                            and prev["cue_to"] < p["cue_from"])
-                if prev["kind"] == "dialogue" and p["kind"] == "dialogue" and forward:
+                if (prev["kind"] == "dialogue" and p["kind"] == "dialogue"
+                        and forward and not prev.get("mixed")):
                     raise LayoutError(
                         "대사 구간이 %.3f초 되감깁니다 (블록%d). 여유 클램프 버그입니다."
                         % (-d, p["bi"] + 1))
@@ -227,6 +243,13 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
             elif (-1e-6 <= d <= MERGE_GAP
                   and abs(prev["volume"] - p["volume"]) < 1e-9
                   and prev["bi"] == p["bi"]):
+                # 종류가 다른 조각이 섞였다고 표시해 둔다. 음소거를 끄면 나레이션과
+                # 대사가 볼륨이 같아 여기서 합쳐지는데, 합친 조각은 kind·cue_to 를
+                # 대사 것으로 물려받아 **아래 되감기 검사가 "대사→대사"로 오판**한다.
+                # 실측: 이 표시가 없으면 가까운 두 큐 사이에 나레이션을 넣은 45건 중
+                # 43건이 "여유 클램프 버그입니다" 로 죽었다.
+                if prev["kind"] != p["kind"]:
+                    prev["mixed"] = True
                 prev["src1"] = p["src1"]
                 p["merged_into"] = prev
                 continue

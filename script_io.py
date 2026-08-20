@@ -238,9 +238,22 @@ def read(text, cues, log=print):
                     "번역(`%s`)만 있고 원문이 없는 문단이 있습니다 — 매칭할 근거가 "
                     "없어 번역을 원문으로 봅니다: %r" % (TRANS_MARK, p[:30]))
                 src, trans = lines, []
+            # 앵커는 **번호 → 시각** 순서로 붙는다. write 가 그 순서로 쓴다:
+            #   #461 @00:52:01.59~00:52:03.83 아빠?
+            # 시각을 먼저 보면 `#` 로 시작하는 줄에서 매칭이 안 돼 시각을 통째로
+            # 놓치고, `@…` 가 대사 텍스트에 섞여 들어간다.
+
+            # `#476 …` 앵커 — 텍스트가 아니라 자막 번호로 큐를 가리킨다
+            ref = None
+            m = CUE_MARK.match(src[0])
+            if m:
+                a, b, rest = int(m.group(1)), m.group(2), m.group(3).strip()
+                ref = (a, int(b) if b else a)
+                src = ([rest] if rest else []) + src[1:]
+
             # `@01:25:02.9~01:25:07.4 …` 앵커 — 자막 없이 그대로 자를 구간
             span = None
-            m = TIME_MARK.match(src[0])
+            m = TIME_MARK.match(src[0]) if src else None
             if m:
                 g = m.groups()
                 span = (_t(g[0], g[1], g[2]), _t(g[3], g[4], g[5]))
@@ -249,20 +262,9 @@ def read(text, cues, log=print):
                 if span[1] <= span[0]:
                     warnings.append("시각 구간이 뒤집혔습니다: %r" % p[:30])
                     span = None
-                if not src:
-                    warnings.append("시각 뒤에 대사가 없습니다: %r" % p[:30])
-                    src = ["(빈 줄)"]
-
-            # `#476 …` 앵커 — 텍스트가 아니라 자막 번호로 큐를 가리킨다
-            ref = None
-            m = CUE_MARK.match(src[0]) if not span else None
-            if m:
-                a, b, rest = int(m.group(1)), m.group(2), m.group(3).strip()
-                ref = (a, int(b) if b else a)
-                src = ([rest] if rest else []) + src[1:]
-                if not src:
-                    warnings.append("#%d 뒤에 대사가 없습니다." % a)
-                    src = ["(빈 줄)"]
+            if not src:
+                warnings.append("앵커 뒤에 대사가 없습니다: %r" % p[:30])
+                src = ["(빈 줄)"]
             cur["items"].append({"kind": "dialogue", "text": " ".join(src),
                                  "lines": src, "trans": trans, "cue_ref": ref,
                                  "span": span, "cues": [], "demoted": False,
