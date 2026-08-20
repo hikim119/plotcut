@@ -219,13 +219,18 @@ def _track(track_type, segments, render_index, flag=0, attribute=0):
 # ── 1층: 순수 조립 ──────────────────────────────────────────────────────────
 
 # ── 자막 스타일 ─────────────────────────────────────────────────────────────
-# 대사와 나레이션은 시간상 겹치지 않으므로 같은 높이를 쓰고 색으로만 구분한다
-# (위치가 흔들리지 않아 보기 좋다). 트랙은 나눠서 CapCut에서 트랙 단위로
-# 한 번에 재스타일링할 수 있게 한다.
+# 자막은 블록마다 **위로 쌓인다.** 새 줄이 늘 맨 아래(SUB_Y0)에 오고 앞 줄이
+# 한 칸(SUB_ROW_STEP)씩 위로 밀린다. 색으로 대사(흰색)와 나레이션(노랑)을 구분한다.
+#
+# 쌓인 줄들은 **시간이 겹치므로** 한 트랙에 못 넣는다. 대신 **줄 자리마다**
+# 트랙을 하나씩 둔다 — 맨 아래 줄 트랙, 그 위 줄 트랙, … 같은 자리끼리는
+# 시간이 안 겹쳐서 트랙 하나에 그대로 들어가고, y 도 트랙마다 고정된다.
+SUB_Y0 = -0.50         # 맨 아래 줄
+SUB_ROW_STEP = 0.09    # 한 칸 위 (12pt + 테두리 기준)
 SUB_STYLES = {
-    "dialogue":  {"color": (1.0, 1.0, 1.0),     "size": 12.0, "transform_y": -0.50,
+    "dialogue":  {"color": (1.0, 1.0, 1.0),     "size": 12.0, "transform_y": SUB_Y0,
                   "border_color": (0.0, 0.0, 0.0), "border_width": 40.0},
-    "narration": {"color": (1.0, 0.910, 0.420), "size": 12.0, "transform_y": -0.50,
+    "narration": {"color": (1.0, 0.910, 0.420), "size": 12.0, "transform_y": SUB_Y0,
                   "border_color": (0.0, 0.0, 0.0), "border_width": 40.0},
     "title":     {"color": (1.0, 1.0, 1.0),     "size": 14.0, "transform_y": 0.45,
                   "border_color": (0.0, 0.0, 0.0), "border_width": 40.0},
@@ -321,21 +326,25 @@ def build_timeline(plan, movie, canvas="vertical", fit="fit",
     # ── 자막 — 대사 / 나레이션 / 제목 세 트랙 ───────────────────────────
     # 제목을 나레이션 트랙에 얹으면 대본이 나레이션으로 시작할 때 둘 다 t=0 이라
     # 겹친다. 화면 위치가 다르니(제목 y=+0.45) 트랙을 나누는 게 맞다.
-    lanes = {"dialogue": [], "narration": [], "title": []}
+    lanes = {"title": []}                 # 나머지는 줄 자리(row)마다 하나씩
     for sub in plan.get("subs") or []:
         kind = sub.get("kind", "dialogue")
         style = styles.get(kind, styles["dialogue"])
         text = _bmp_safe("\n".join(sub["lines"]))
         if not text.strip():
             continue
+        row = 0 if kind == "title" else int(sub.get("row", 0))
+        y = (float(style["transform_y"]) if kind == "title"
+             else SUB_Y0 + row * SUB_ROW_STEP)
         t_mid, t_mat = _text_material(
             text, color=tuple(style["color"]), size=float(style["size"]),
             border_color=tuple(style["border_color"]),
             border_width=float(style["border_width"]))
         materials["texts"].append(t_mat)
         seg = _text_segment(t_mid, _us(sub["t_start"]), max(1, _us(sub["t_dur"])),
-                            [], float(style["transform_y"]))
-        lanes[kind if kind in lanes else "dialogue"].append(seg)
+                            [], y)
+        lanes.setdefault("title" if kind == "title" else "row%d" % row,
+                         []).append(seg)
         stats["subs"] += 1
         total_us = max(total_us, seg["target_timerange"]["start"]
                        + seg["target_timerange"]["duration"])
@@ -386,8 +395,12 @@ def build_timeline(plan, movie, canvas="vertical", fit="fit",
         tracks.append(_track("video", video_segs, tri))
         tri += 1
     base = TEXT_RENDER_BASE
-    for name in ("dialogue", "narration", "title"):
-        lane = lanes[name]
+    # 아래 줄부터 위로, 마지막이 제목. 트랙 순서가 화면 위아래와 같아야
+    # CapCut 에서 "몇 번째 줄"을 찾기 쉽다.
+    rows = sorted((n for n in lanes if n.startswith("row")),
+                  key=lambda n: int(n[3:]))
+    for name in rows + ["title"]:
+        lane = lanes.get(name) or []
         if not lane:
             continue
         lane.sort(key=lambda x: x["target_timerange"]["start"])

@@ -25,6 +25,9 @@ MERGE_GAP = 1.0        # 이 이하로 벌어진 인접 소스는 하나로 이�
 MAX_BACKFILL = 8.0     # 앞 나레이션이 이보다 더 거슬러 올라가면 경고
 NARR_DUCK_VOLUME = 0.0 # 자막 없는 대사가 새는 구간의 볼륨
 TITLE_S = 3.0          # 제목 자막 노출 시간
+# 한 블록의 자막은 **위로 쌓인다** — 새 줄이 늘 맨 아래 같은 자리에 오고
+# 앞 줄이 한 칸씩 위로 밀린다. 블록이 바뀌면 다시 1번줄부터.
+SUB_ROWS_MAX = 8       # 이보다 많이 쌓이면 오래된 줄부터 화면 밖으로 뺀다
 
 REWIND_BUG = 5.0       # 이보다 작은 음수 간격은 버그, 큰 것은 블록 간 점프
 
@@ -310,13 +313,7 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
                          "lines": [it["text"]], "kind": "narration",
                          "bi": u["bi"], "src_no": None})
     subs.sort(key=lambda s: s["t_start"])
-    for i, s in enumerate(subs):
-        # 마지막 자막은 영상 끝에서 같이 끝난다. 전에는 0.3초 "여운"을 줬는데
-        # 영상 트랙은 그대로라 **검은 화면에 자막만 뜨는 0.3초**가 생겼다
-        # (실측: 영상 103.686초 / 자막 103.986초). 여운은 마지막 대사 뒤에
-        # 붙는 POST 가 이미 만들어 준다.
-        end = subs[i + 1]["t_start"] if i + 1 < len(subs) else total
-        s["t_dur"] = max(min_seg, min(end, total) - s["t_start"])
+    subs = _stack(subs, total, min_seg)
 
     if doc.get("title"):
         # 제목은 화면 위(y=+0.45), 자막은 아래(y=-0.50)라 겹쳐 보이지 않는다.
@@ -400,6 +397,42 @@ def _items(doc):
 def _hms(sec):
     sec = max(0, int(sec))
     return "%d:%02d:%02d" % (sec // 3600, (sec % 3600) // 60, sec % 60)
+
+
+def _stack(subs, total, min_seg):
+    """블록 안의 자막을 **쌓는다.**
+
+    앞 줄이 사라지지 않고 남은 채로 새 줄이 아래에 붙는다. CapCut 세그먼트는
+    한 번 놓이면 위치를 못 바꾸므로, 줄이 하나 늘 때마다 **그 시점의 화면 상태**를
+    통째로 다시 깐다. 문단 N개짜리 블록이면 N(N+1)/2 개 세그먼트가 된다.
+
+    row 는 **맨 아래가 0**, 위로 갈수록 커진다. 같은 row 끼리는 시간이 안 겹쳐서
+    CapCut 트랙 하나에 그대로 들어간다.
+    """
+    out = []
+    i = 0
+    while i < len(subs):
+        bi = subs[i]["bi"]
+        j = i
+        while j < len(subs) and subs[j]["bi"] == bi:
+            j += 1
+        blk = subs[i:j]
+        # 이 블록의 자막이 사라지는 시각 = 다음 블록 첫 자막, 없으면 영상 끝
+        blk_end = subs[j]["t_start"] if j < len(subs) else total
+        blk_end = min(blk_end, total)
+        for s_i in range(len(blk)):
+            t0 = blk[s_i]["t_start"]
+            t1 = blk[s_i + 1]["t_start"] if s_i + 1 < len(blk) else blk_end
+            dur = min(t1, total) - t0
+            if dur < min_seg:
+                # 1프레임을 못 채우는 상태는 화면에 보이지도 않는다 — 건너뛴다.
+                # (남기면 CapCut 이 못 받는 세그먼트가 된다)
+                continue
+            lo = max(0, s_i - SUB_ROWS_MAX + 1)
+            for k in range(lo, s_i + 1):
+                out.append(dict(blk[k], t_start=t0, t_dur=dur, row=s_i - k))
+        i = j
+    return out
 
 
 def apply_headers(doc, headers):
