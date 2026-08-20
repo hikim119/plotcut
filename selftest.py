@@ -572,6 +572,14 @@ def main():
           "work_dir" in inspect.signature(sg.generate).parameters)
     check("run_script 가 project_name 을 받는다",
           "project_name" in inspect.signature(pipeline.run_script).parameters)
+
+    # 대본만 만들기 결과에도 시각을 박는다. 외국어 자막이면 `#763` 번호뿐이라
+    # 자막 파일이 없으면 아무 시각도 알 수 없다.
+    _rs = inspect.getsource(pipeline.run_script)
+    check("run_script 가 시각을 박는다", "apply_spans" in _rs)
+    check("나레이션 파일도 같이 쓴다", "narration_text" in _rs)
+    # 전부 강등된 대본(자막이 아예 안 맞는 경우)에는 박을 시각이 없다
+    check("강등뿐이면 박지 않는다", "st[\"demoted\"] < st[\"dialogue\"]" in _rs)
     check("중단은 실패와 구분된다", issubclass(sg.GenStopped, sg.GenError))
 
     # codex 는 --full-auto 를 없앴다 (0.147.0: "unexpected argument '--full-auto'").

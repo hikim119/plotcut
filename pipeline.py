@@ -334,6 +334,18 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
         log("  ⚠ " + w)
     log("  총 길이 %.1f초 (%.1f분) · 목표 %.0f초"
         % (pl["total_s"], pl["total_s"] / 60, target_s))
+
+    # 에이전트가 쓴 대본에는 시각이 없다. 한국어 자막이면 대사 텍스트로 다시
+    # 찾을 수 있지만, 외국어 자막이면 `#763` 번호뿐이라 **자막 파일이 없으면
+    # 아무 시각도 알 수 없다.** 여기서 박아 두면 대본 하나로 완결된다.
+    if st["demoted"] < st["dialogue"]:
+        layout.apply_headers(doc, pl["headers"])
+        layout.apply_spans(doc, pl)
+        write_atomic(Path(path), script_io.write(doc))
+        write_atomic(Path(path).parent / "narration.txt",
+                     script_io.narration_text(doc))
+        log("  ✔ 대사마다 시각을 박았습니다 — 자막 파일 없이도 만들 수 있습니다")
+
     progress(1.0)
     log("\n완료 (%s) — [%s] 탭에서 고칠 수 있습니다."
         % (took(t0), script_io.LABEL))
