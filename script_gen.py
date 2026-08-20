@@ -201,14 +201,15 @@ def _looks_read_only(out):
     return any(k in low for k in _NO_WRITE)
 
 
-def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title=""):
+def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
+                 plot_path=None):
     srt_path = Path(srt_path).resolve()
     out_path = Path(out_path).resolve()
     movie_title = (movie_title or "").strip()
     lines = [
         "PlotCut 영화 리캡 대본을 만들어라. 아래를 순서대로 반드시 수행한다.",
         "",
-        '1. "%s" 의 ① 절들을 전문 읽어라. 포맷·§구성·문체 규칙 9개·분량 공식이 거기 있다.' % RULES,
+        '· "%s" 의 ① 절들을 전문 읽어라. 포맷·§구성·문체 규칙 9개·분량 공식이 거기 있다.' % RULES,
         "   **5·6단계를 특히 지켜라.** 여기서 자연스러움이 갈린다:",
         "   · **대사 5~8줄마다 나레이션 하나.** 이게 제일 중요하다 —",
         "     나레이션이 잦으면 이야기가 아니라 '요약 + 인용문'이 된다",
@@ -220,8 +221,8 @@ def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title=""):
         "     (`결국 인내심에 한계가 온 미키` / `그 말에 일진들은 냅다 도망치기 시작했는데`)",
         "   · **영화의 말투를 그대로 써라.** 액션·코미디면 구어체, 문예물이면 문어체",
         "   · 한 문단 = 자막 한 줄이 기본 (실측 94%)",
-        '2. "%s" 로 문체를 맞춰라.' % STYLE,
-        '3. 자막 파일: "%s"' % srt_path,
+        '· "%s" 로 문체를 맞춰라.' % STYLE,
+        '· 자막 파일: "%s"' % srt_path,
         "   **SRT 파일에 적힌 번호를 기준으로 읽어라.**",
     ]
     if movie_title:
@@ -229,25 +230,45 @@ def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title=""):
         # `The.Movie.2019.1080p.BluRay-GROUP.srt`). 제목을 알아야 자막에 안 나오는
         # 상황을 짚을 수 있다 — 액션·코미디는 이야기가 대부분 화면에 있다.
         lines += [
-            "   영화 제목: **%s**" % movie_title,
-            "   **이 영화를 안다면 줄거리와 결말을 먼저 3~4줄로 정리하고 시작해라.**",
-            "   자막만 읽으면 화면에서 벌어지는 일이 안 보인다 — 어느 장면이 결정적인지",
-            "   고르는 데 쓴다. **모르면 그냥 자막만 보고 써라. 지어내지 마라.**",
-            "   알더라도 대사는 언제나 자막 원문 그대로고, 나레이션도 **그 컷에 실제로",
-            "   보이는 것**만 적는다. 영화 지식은 고르는 데만 쓰고 화면에 없는 걸 쓰지 마라.",
+            "   영화 제목: **%s** — 이 영화를 안다면 아는 것도 쓴다." % movie_title,
+            "   단 **대사는 언제나 자막 원문 그대로**고, 나레이션도 **그 컷에 실제로",
+            "   보이는 것**만 적는다. 영화 지식은 무엇을 고를지 정하는 데만 쓴다.",
+        ]
+    if plot_path:
+        # 줄거리를 머릿속으로만 정리하고 버리면 사람이 편집할 때 다시 영화를
+        # 봐야 한다. 파일로 남겨 [줄거리] 탭에서 먼저 읽고 고칠 수 있게 한다.
+        lines += [
+            '· **대본을 쓰기 전에** 이 경로에 줄거리를 정리해 써라 (UTF-8):',
+            '   "%s"' % Path(plot_path).resolve(),
+            "   이 형식 그대로, 각 항목은 3~5줄:",
+            "",
+            "     [줄거리]",
+            "     (누가 무엇을 하다가 어떻게 되는지. 시간순으로.)",
+            "",
+            "     [결말]",
+            "     (마지막에 어떻게 끝나는지. 숨기지 말고 그대로 적는다.)",
+            "",
+            "     [이 대본에서 고른 것]",
+            "     (여러 줄기 중 무엇을 골랐고 무엇을 버렸는지, 왜 그랬는지.)",
+            "",
+            "     [자막에 안 나오는 것]",
+            "     (화면에는 보이는데 대사로는 안 나오는 것. 없으면 '없음'.)",
+            "",
+            "   **자막에서 읽어낸 것만 쓴다. 모르는 건 '자막만으로는 알 수 없음'이라고",
+            "   적고 지어내지 마라.** 이 파일은 사람이 편집 전에 읽는 용도다.",
         ]
     lines += [
-        "4. 목표 길이: %d초" % int(target_s),
-        '5. 대본을 정확히 이 경로에 UTF-8(BOM 없음)로 써라:',
+        "· 목표 길이: %d초" % int(target_s),
+        '· 대본을 정확히 이 경로에 UTF-8(BOM 없음)로 써라:',
         '   "%s"' % out_path,
-        "6. 그 다음 아래를 실행해 ✘ 를 고쳐라. **고쳐 쓰기는 최대 3번까지만** 하고,",
+        "· 그 다음 아래를 실행해 ✘ 를 고쳐라. **고쳐 쓰기는 최대 3번까지만** 하고,",
         "   그래도 남으면 남은 채로 끝내라 — 검산에 시간을 더 쓰지 마라.",
         '   cd "%s"' % ROOT,
         '   python cli.py check "%s" --srt "%s" --seconds %d'
         % (out_path, srt_path, int(target_s)),
         "   이 명령이 권한 문제로 실행되지 않으면 **그냥 건너뛰고 끝내라.**",
         "   소스 코드를 읽어 손으로 검산하지 마라 — PlotCut 이 뒤에서 다시 검사한다.",
-        "7. 끝나면 총 길이·블록 수·고른 줄거리를 3줄 이내로만 출력해라.",
+        "· 끝나면 총 길이·블록 수·고른 줄거리를 3줄 이내로만 출력해라.",
         "",
         "절대 자막에 없는 대사를 지어내지 마라. 대사는 자막 원문 그대로 옮긴다.",
         "다른 파일은 건드리지 마라.",
@@ -298,6 +319,8 @@ _UNKNOWN_OPT = ("unknown option", "unexpected argument", "unrecognized",
 # 넘긴다). 그러면 한 실행이 한 폴더로 끝나고 results/ 바로 아래가 안 더러워진다.
 # work_dir 없이 부르면 여기로 — 프로젝트 **안**이어야 한다. 에이전트 샌드박스가
 # 작업 폴더 밖을 읽고 쓰는 것을 막는다.
+# 편집 전에 읽을 줄거리·결말. 대본과 같은 폴더에 둔다.
+PLOT_NAME = "줄거리.txt"
 WORK = ROOT / ".work"
 # 실행 시간 기록은 실행마다가 아니라 도구 전체에 하나뿐이므로 여기 남는다.
 TIMING = WORK / "gen_timing.json"
@@ -497,6 +520,8 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
     # 밖에 있으면 대본을 다 써놓고도 엉뚱한 곳에 떨어져
     # "대본 파일을 만들지 못했습니다" 로 실패한다(실측: mkdir 거부).
     staged = work / "생성중_초안.txt"
+    staged_plot = work / "생성중_줄거리.txt"
+    staged_plot.unlink(missing_ok=True)
     staged.unlink(missing_ok=True)
 
     # 자막도 **프로젝트 안으로 복사**해서 넘긴다. 샌드박스는 작업 폴더 밖을
@@ -516,7 +541,8 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
                            % (sub_in, e)) from e
 
     with open(ptxt, "w", encoding="utf-8", newline="\n") as f:
-        f.write(build_prompt(sub_for_agent, staged, target_s, extra, movie_title))
+        f.write(build_prompt(sub_for_agent, staged, target_s, extra, movie_title,
+                             plot_path=staged_plot))
     prompt = ('"%s" 파일을 읽고, 거기 적힌 지시를 그대로 순서대로 수행해라.' % ptxt)
 
     log("  %s 로 대본을 만듭니다 — 몇 분 걸립니다" % spec["label"])
@@ -564,6 +590,12 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
                 progress(1.0)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(staged), str(out_path))
+            # 줄거리는 있으면 좋고 없어도 그만이다 — 대본이 나온 게 성공이다.
+            if staged_plot.exists() and staged_plot.stat().st_size > 0:
+                shutil.move(str(staged_plot),
+                            str(out_path.parent / PLOT_NAME))
+            else:
+                log("  (줄거리 파일은 안 나왔습니다 — 대본은 정상입니다)")
             # 성공했으면 중간 파일은 남길 이유가 없다 (실패 때만 남겨 진단에 쓴다)
             for tmp in (ptxt, outfile):
                 tmp.unlink(missing_ok=True)

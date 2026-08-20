@@ -634,12 +634,33 @@ def main():
               "movie_title" in inspect.signature(_f).parameters)
     _with = sg.build_prompt(SRT, "o.txt", 180, "", "중경삼림")
     _without = sg.build_prompt(SRT, "o.txt", 180, "", "")
-    check("제목을 주면 줄거리 지시가 붙는다", "줄거리와 결말을 먼저" in _with)
-    check("비우면 안 붙는다", "줄거리와 결말을 먼저" not in _without)
-    check("알아도 지어내지 말라고 못 박는다", "지어내지 마라" in _with)
+    check("제목을 주면 영화 지식을 쓰라고 한다", "이 영화를 안다면" in _with)
+    check("비우면 안 붙는다", "이 영화를 안다면" not in _without)
+    check("알아도 대사는 자막 원문 그대로",
+          "대사는 언제나 자막 원문 그대로" in _with)
+    check("영화 지식은 고르는 데만", "고를지 정하는 데만" in _with)
     _gui = (ROOT / "gui.py").read_text(encoding="utf-8")
     eq("GUI 두 실행 경로에 제목 전달",
        _gui.count("movie_title=self._title()"), 2)
+
+    # 줄거리·결말을 파일로 남긴다 — 편집 전에 [줄거리] 탭에서 읽으라고.
+    check("build_prompt 가 줄거리 경로를 받는다",
+          "plot_path" in inspect.signature(sg.build_prompt).parameters)
+    _pp = sg.build_prompt(SRT, "o.txt", 180, "", "", plot_path="results/x/줄거리.txt")
+    _np = sg.build_prompt(SRT, "o.txt", 180, "", "")
+    for _k in ("[줄거리]", "[결말]", "[이 대본에서 고른 것]", "[자막에 안 나오는 것]"):
+        check("줄거리 지시에 %s 항목" % _k, _k in _pp)
+    check("줄거리는 대본보다 먼저 쓰라고 한다", "대본을 쓰기 전에" in _pp)
+    check("줄거리도 지어내지 말라고 한다", "지어내지 마라" in _pp)
+    check("경로를 안 주면 줄거리 지시가 없다", "[줄거리]" not in _np)
+    eq("줄거리 파일 이름", sg.PLOT_NAME, "줄거리.txt")
+    # 대본이 나왔는데 줄거리가 없다고 실패하면 안 된다 (있으면 좋고 없어도 그만)
+    _gen = inspect.getsource(sg.generate)
+    check("줄거리가 없어도 성공으로 본다", "줄거리 파일은 안 나왔습니다" in _gen)
+    # GUI 탭
+    check("GUI 에 줄거리 탭", '"plot", "줄거리"' in _gui)
+    check("줄거리 탭은 읽기 전용", 'sb3.set, state="disabled"' in _gui)
+    check("실행 결과에서 줄거리를 싣는다", 'res.get("plot_path")' in _gui)
 
     check("codex 사다리에 --full-auto 없음",
           all("--full-auto" not in a for a in cx))

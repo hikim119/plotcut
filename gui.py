@@ -370,7 +370,8 @@ class App:
         bar = tk.Frame(wrap_f, bg=BG)
         bar.pack(fill="x")
         self.tab_btns = {}
-        for key, title in (("log", "로그"), ("script", script_io.LABEL)):
+        for key, title in (("log", "로그"), ("plot", "줄거리"),
+                           ("script", script_io.LABEL)):
             b = tk.Button(bar, text=title, command=lambda k=key: self._show_tab(k),
                           bg=BG2, fg=TEXTMUT, relief="flat", cursor="hand2",
                           font=("맑은 고딕", 9), padx=14, pady=5)
@@ -388,6 +389,18 @@ class App:
         self.log.configure(yscrollcommand=sb.set, state="disabled")
         sb.pack(side="right", fill="y")
         self.log.pack(fill="both", expand=True)
+
+        # 편집 전에 영화를 이해하고 들어가라고 두는 탭. 읽기 전용이다 —
+        # 대본과 달리 여기서 고쳐도 결과가 달라지지 않으니 오해를 만들지 않는다.
+        self.plot_frame = tk.Frame(self.tab_body, bg=BG2)
+        self.plot_text = tk.Text(self.plot_frame, bg=BG2, fg=TEXT, relief="flat",
+                                 font=("맑은 고딕", 11), wrap="word",
+                                 padx=16, pady=10, spacing1=2, spacing3=2)
+        sb3 = tk.Scrollbar(self.plot_frame, command=self.plot_text.yview, bg=BG3)
+        self.plot_text.configure(yscrollcommand=sb3.set, state="disabled")
+        sb3.pack(side="right", fill="y")
+        self.plot_text.pack(fill="both", expand=True)
+        self._set_plot("")
 
         self.script_frame = tk.Frame(self.tab_body, bg=BG2)
         sf_bottom = tk.Frame(self.script_frame, bg=BG2)
@@ -412,10 +425,10 @@ class App:
         for k, b in self.tab_btns.items():
             b.configure(bg=BG3 if k == key else BG2,
                         fg=TEXT if k == key else TEXTMUT)
-        self.log_frame.pack_forget()
-        self.script_frame.pack_forget()
-        (self.log_frame if key == "log" else self.script_frame).pack(
-            fill="both", expand=True)
+        for f in (self.log_frame, self.plot_frame, self.script_frame):
+            f.pack_forget()
+        {"log": self.log_frame, "plot": self.plot_frame,
+         "script": self.script_frame}[key].pack(fill="both", expand=True)
 
     # ── 파일 ────────────────────────────────────────────────────────────
     def _pick(self, key):
@@ -601,6 +614,13 @@ class App:
     def _after_run(self, res):
         if not isinstance(res, dict):
             return
+        # 줄거리는 두 경로 모두에서 나올 수 있다. 있으면 탭을 채운다.
+        pp = res.get("plot_path")
+        if pp:
+            try:
+                self._set_plot(Path(pp).read_bytes().decode("utf-8-sig"))
+            except OSError:
+                pass
         sp = res.get("script_path")
         if sp:                                   # 대본만 만들기
             p = Path(sp)
@@ -688,6 +708,26 @@ class App:
         self.prog_lbl.configure(
             text="%s   %d%%   %d:%02d 경과" % (self._step, pct, el // 60, el % 60))
         self.root.after(200, self._tick)
+
+    def _set_plot(self, text):
+        """줄거리 탭 내용. 비면 왜 비었는지 알려 준다."""
+        body = text.strip() or "\n".join([
+            "대본을 만들면 여기에 줄거리와 결말이 들어옵니다.",
+            "",
+            "  · [줄거리]  누가 무엇을 하다가 어떻게 되는지",
+            "  · [결말]  마지막에 어떻게 끝나는지",
+            "  · [이 대본에서 고른 것]  무엇을 골랐고 무엇을 버렸는지",
+            "  · [자막에 안 나오는 것]  화면에는 보이는데 대사엔 없는 것",
+            "",
+            "편집하기 전에 먼저 읽어 보세요.",
+        ])
+
+        def do():
+            self.plot_text.configure(state="normal")
+            self.plot_text.delete("1.0", "end")
+            self.plot_text.insert("1.0", body)
+            self.plot_text.configure(state="disabled")
+        self.root.after(0, do)
 
     def _set_script(self, text):
         def do():

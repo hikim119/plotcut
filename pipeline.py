@@ -351,8 +351,12 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
     progress(1.0)
     log("\n완료 (%s) — [%s] 탭에서 고칠 수 있습니다."
         % (took(t0), script_io.LABEL))
+    plot = Path(path).parent / script_gen.PLOT_NAME
+    if plot.exists():
+        log("  ✔ %s — 편집 전에 읽어 보세요" % plot.name)
     return {"script_path": str(path),
             "results_dir": str(rdir) if rdir else None,
+            "plot_path": str(plot) if plot.exists() else None,
             "doc": doc, "plan": pl}
 
 
@@ -444,7 +448,10 @@ def run_build(script_path, srt_path, movie_path=None, project_name=None,
             progress(step[6])
             log("\n완료 (%s) — CapCut을 껐다 켜면 '%s' 프로젝트가 보입니다."
                 % (took(t0), ident["folder_name"]))
-            return {"state": state, "results_dir": str(rdir), "plan": pl, "doc": doc}
+            plot = rdir / "줄거리.txt"
+        return {"state": state, "results_dir": str(rdir),
+                "plot_path": str(plot) if plot.exists() else None,
+                "plan": pl, "doc": doc}
     except Stopped:
         # 중단은 실패가 아니라 취소다 — 아직 아무 결과도 안 나왔으면
         # 만들어 둔 폴더를 지운다(락이 풀린 뒤라야 지워진다).
