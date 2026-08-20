@@ -343,10 +343,11 @@ def build_timeline(plan, movie, canvas="vertical", fit="fit",
         materials["texts"].append(t_mat)
         seg = _text_segment(t_mid, _us(sub["t_start"]), max(1, _us(sub["t_dur"])),
                             [], y)
-        # 자막은 한 번에 하나만 뜬다(시간이 안 겹친다) — 트랙 하나면 충분하다.
-        # 높이는 세그먼트마다 따로 주므로 한 트랙 안에서도 줄 자리가 바뀐다.
-        # 줄 자리마다 트랙을 나누면 위쪽 트랙이 텅 빈 채로 늘어서기만 한다.
-        lanes.setdefault("title" if kind == "title" else "sub", []).append(seg)
+        # **줄 자리마다 트랙을 따로 둔다.** 시간이 안 겹치니 한 트랙에 몰아넣어도
+        # 되지만, 그러면 CapCut 에서 "몇 번째 단"을 통째로 고를 수가 없다.
+        # 블록 안 순서 = 단 번호 = 트랙 번호이고, 블록이 바뀌면 다시 1단부터.
+        lanes.setdefault("title" if kind == "title" else "row%d" % row,
+                         []).append(seg)
         stats["subs"] += 1
         total_us = max(total_us, seg["target_timerange"]["start"]
                        + seg["target_timerange"]["duration"])
@@ -397,7 +398,11 @@ def build_timeline(plan, movie, canvas="vertical", fit="fit",
         tracks.append(_track("video", video_segs, tri))
         tri += 1
     base = TEXT_RENDER_BASE
-    for name in ("sub", "title"):
+    # 아래 단부터 위로, 마지막이 제목. 트랙 순서가 화면 위아래와 같아야
+    # CapCut 에서 "몇 번째 단"을 찾기 쉽다.
+    rows = sorted((n for n in lanes if n.startswith("row")),
+                  key=lambda n: int(n[3:]))
+    for name in rows + ["title"]:
         lane = lanes.get(name) or []
         if not lane:
             continue
