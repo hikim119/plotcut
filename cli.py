@@ -67,6 +67,8 @@ def main(argv=None):
                    help="대본 경로를 직접 지정. 생략하면 결과 폴더 안에 만든다")
     p.add_argument("--seconds", type=float, default=180.0)
     p.add_argument("--extra", default="", help="연출 지시 (예: 잭 이야기만)")
+    p.add_argument("--title", default="",
+                   help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
 
@@ -84,6 +86,8 @@ def main(argv=None):
     p.add_argument("--name", default=None)
     p.add_argument("--seconds", type=float, default=180.0)
     p.add_argument("--extra", default="")
+    p.add_argument("--title", default="",
+                   help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
     p.add_argument("--canvas", default="vertical",
@@ -121,6 +125,7 @@ def _run(a):
         import pipeline
         r = pipeline.run_script(a.srt, a.out, project_name=a.name,
                                 target_s=a.seconds, extra=a.extra,
+                                movie_title=a.title,
                                 prefer=a.agent, log=print)
         print("\n대본: %s" % r["script_path"])
         return 0
@@ -130,7 +135,8 @@ def _run(a):
                            canvas=a.canvas, fit=a.fit, offset_s=a.offset,
                            fps_scale=a.fps_scale, prefer_class=a.prefer_class,
                            draft_root=a.draft_root,
-                           target_s=a.seconds, extra=a.extra, prefer=a.agent,
+                           target_s=a.seconds, extra=a.extra,
+                           movie_title=a.title, prefer=a.agent,
                            freeze=a.freeze, mute=a.mute, log=print)
         return 0
     if a.cmd == "list":

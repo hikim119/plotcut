@@ -69,16 +69,16 @@ RUNNERS = {
         # (`python cli.py check`)가 거부당하고, 에이전트가 대신 cli.py·script_io.py·
         # layout.py 를 통째로 읽어 손으로 검산하느라 몇 배 느려진다. python 만 연다.
         #
-        # `--effort low` 가 유일하게 의미 있는 속도 레버다. 실측(중경삼림 자막):
-        # 시간의 87%가 모델 추론이고 그 중 한 턴이 307~374초 — 도구 호출은 12%라
-        # 자막을 요약해 주거나 검증 루프를 줄여도 거의 안 줄어든다.
-        #   기본 effort : ~500초
-        #   low         : 142 / 163 / 175 / 202초 (4회) — 전부 강등 0 · 경고 0
-        #                 대사/나레이션 5.5~7.6줄(목표 5~8) · 목표 길이 ±8초
-        # medium 은 240초에 목표를 61초 넘겨(대사 76문단) low 보다 나빴다.
+        # **effort 를 낮추지 않는다.** 한때 `--effort low` 를 넣어 3.4배 빨랐지만
+        # 대본이 눈에 띄게 나빠졌다. 같은 자막으로 나란히 뽑아 본 실측:
+        #   low  131초 · 블록 16 · 대사 63 · 나레이션 9 (7.0줄당 1개) · 184.2초
+        #   기본 447초 · 블록 17 · 대사 67 · 나레이션 9 (7.4줄당 1개) · 188.7초
+        # 숫자는 거의 같은데 문장이 다르다. low 는 완결형 명사로 끊고
+        # (`…딱 걸려버린 여자`) 방금 나온 대사를 다시 설명하는 줄이 섞인다.
+        # 기본은 연결어미로 다음을 열고(`…딱 걸려버린 여자인데`) 대사가 말하지
+        # 않는 것을 짚는다(`집이 바뀌고 있는 줄은 꿈에도 모른 채`).
+        # AGENTS.md 규칙 3·4 가 요구하는 게 후자다 — `check` 로는 안 잡힌다.
         "argv": [["-p", "{prompt}", "--permission-mode", "acceptEdits",
-                  "--allowedTools", "Bash(python:*)", "--effort", "low"],
-                 ["-p", "{prompt}", "--permission-mode", "acceptEdits",
                   "--allowedTools", "Bash(python:*)"],
                  ["-p", "{prompt}", "--permission-mode", "acceptEdits"],
                  ["-p", "{prompt}"]],
@@ -201,9 +201,10 @@ def _looks_read_only(out):
     return any(k in low for k in _NO_WRITE)
 
 
-def build_prompt(srt_path, out_path, target_s=180, extra=""):
+def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title=""):
     srt_path = Path(srt_path).resolve()
     out_path = Path(out_path).resolve()
+    movie_title = (movie_title or "").strip()
     lines = [
         "PlotCut 영화 리캡 대본을 만들어라. 아래를 순서대로 반드시 수행한다.",
         "",
@@ -222,6 +223,20 @@ def build_prompt(srt_path, out_path, target_s=180, extra=""):
         '2. "%s" 로 문체를 맞춰라.' % STYLE,
         '3. 자막 파일: "%s"' % srt_path,
         "   **SRT 파일에 적힌 번호를 기준으로 읽어라.**",
+    ]
+    if movie_title:
+        # 파일 이름이 영화 제목인 경우가 오히려 드물다(`English.srt`,
+        # `The.Movie.2019.1080p.BluRay-GROUP.srt`). 제목을 알아야 자막에 안 나오는
+        # 상황을 짚을 수 있다 — 액션·코미디는 이야기가 대부분 화면에 있다.
+        lines += [
+            "   영화 제목: **%s**" % movie_title,
+            "   **이 영화를 안다면 줄거리와 결말을 먼저 3~4줄로 정리하고 시작해라.**",
+            "   자막만 읽으면 화면에서 벌어지는 일이 안 보인다 — 어느 장면이 결정적인지",
+            "   고르는 데 쓴다. **모르면 그냥 자막만 보고 써라. 지어내지 마라.**",
+            "   알더라도 대사는 언제나 자막 원문 그대로고, 나레이션도 **그 컷에 실제로",
+            "   보이는 것**만 적는다. 영화 지식은 고르는 데만 쓰고 화면에 없는 걸 쓰지 마라.",
+        ]
+    lines += [
         "4. 목표 길이: %d초" % int(target_s),
         '5. 대본을 정확히 이 경로에 UTF-8(BOM 없음)로 써라:',
         '   "%s"' % out_path,
@@ -286,7 +301,7 @@ _UNKNOWN_OPT = ("unknown option", "unexpected argument", "unrecognized",
 WORK = ROOT / ".work"
 # 실행 시간 기록은 실행마다가 아니라 도구 전체에 하나뿐이므로 여기 남는다.
 TIMING = WORK / "gen_timing.json"
-DEFAULT_SECS = 180.0        # 실측: --effort low 로 142~202초
+DEFAULT_SECS = 450.0        # 실측: 기본 effort 로 447초 (low 였을 땐 131~202초)
 
 
 def expected_secs(key):
@@ -429,7 +444,8 @@ def _inside_workdir(path):
         return False
 
 
-def generate(srt_path, out_path, target_s=180, extra="", prefer=None,
+def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
+             prefer=None,
              work_dir=None, timeout=1800, log=print, stop=None, progress=None):
     """에이전트를 돌려 대본 txt를 만든다. 반환: Path(out_path)."""
     found = find_runner(prefer)
@@ -500,7 +516,7 @@ def generate(srt_path, out_path, target_s=180, extra="", prefer=None,
                            % (sub_in, e)) from e
 
     with open(ptxt, "w", encoding="utf-8", newline="\n") as f:
-        f.write(build_prompt(sub_for_agent, staged, target_s, extra))
+        f.write(build_prompt(sub_for_agent, staged, target_s, extra, movie_title))
     prompt = ('"%s" 파일을 읽고, 거기 적힌 지시를 그대로 순서대로 수행해라.' % ptxt)
 
     log("  %s 로 대본을 만듭니다 — 몇 분 걸립니다" % spec["label"])

@@ -621,6 +621,26 @@ def main():
     # codex 는 --full-auto 를 없앴다 (0.147.0: "unexpected argument '--full-auto'").
     # 그대로 두면 1단이 항상 튕기고, 뒤 단계는 읽기 전용이라 대본을 못 쓴다.
     cx = sg.RUNNERS["codex"]["argv"]
+    # effort 를 낮추면 대본이 나빠진다 (실측: low 는 완결형으로 끊고 대사를
+    # 다시 설명한다). check 로는 안 잡히므로 인자로 못 박는다.
+    check("effort 를 낮추지 않는다",
+          all("--effort" not in a for a in sg.RUNNERS["claude"]["argv"]))
+
+    # 영화 제목 — 파일 이름이 제목이 아닌 경우가 많다(English.srt)
+    check("build_prompt 가 제목을 받는다",
+          "movie_title" in inspect.signature(sg.build_prompt).parameters)
+    for _f in (sg.generate, pipeline.run_script, pipeline.run_build):
+        check("%s 가 제목을 넘긴다" % _f.__name__,
+              "movie_title" in inspect.signature(_f).parameters)
+    _with = sg.build_prompt(SRT, "o.txt", 180, "", "중경삼림")
+    _without = sg.build_prompt(SRT, "o.txt", 180, "", "")
+    check("제목을 주면 줄거리 지시가 붙는다", "줄거리와 결말을 먼저" in _with)
+    check("비우면 안 붙는다", "줄거리와 결말을 먼저" not in _without)
+    check("알아도 지어내지 말라고 못 박는다", "지어내지 마라" in _with)
+    _gui = (ROOT / "gui.py").read_text(encoding="utf-8")
+    eq("GUI 두 실행 경로에 제목 전달",
+       _gui.count("movie_title=self._title()"), 2)
+
     check("codex 사다리에 --full-auto 없음",
           all("--full-auto" not in a for a in cx))
     check("1단이 쓰기 가능 모드", "--approve-for-me" in cx[0])

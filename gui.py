@@ -119,6 +119,7 @@ class App:
         self._stop = threading.Event()
         self._busy = False
         self.name_var = tk.StringVar()
+        self.title_var = tk.StringVar()
         self.canvas_ko = tk.StringVar(value=CANVAS_KO[0])
         self.offset_var = tk.DoubleVar(value=0.0)
         self.secs_var = tk.StringVar(value="180")
@@ -255,6 +256,17 @@ class App:
         tk.Entry(r, textvariable=self.name_var, bg=BG3, fg=TEXT, relief="flat",
                  insertbackground=TEXT, font=("맑은 고딕", 9)).pack(
                      side="left", fill="x", expand=True, ipady=3)
+
+        # 파일 이름이 영화 제목인 경우가 오히려 드물다(`English.srt`,
+        # `The.Movie.2019.1080p.BluRay-GROUP.srt`). 제목을 알려 주면 에이전트가
+        # 아는 줄거리·결말로 어느 장면이 결정적인지 고른다. 몰라도 그만이다.
+        r = row((0, 4))
+        title(r, "영화 제목")
+        e = tk.Entry(r, textvariable=self.title_var, bg=BG3, fg=TEXT,
+                     relief="flat", insertbackground=TEXT,
+                     font=("맑은 고딕", 9))
+        e.pack(side="left", fill="x", expand=True, ipady=3)
+        self._hint(e, "모르면 비워 두세요 — 알면 줄거리·결말을 참고해 씁니다")
 
         # 비워 두면 무엇으로 만들어지는지 미리 보여 준다. 칸에 직접 채워 넣지
         # 않는 이유: 채워 두면 다른 영화를 넣어도 그 이름이 남아 엉뚱한
@@ -469,6 +481,11 @@ class App:
         v = self.extra_text.get("1.0", "end").strip()
         return "" if v == EXTRA_HINT.strip() else v
 
+    def _title(self):
+        """영화 제목. 플레이스홀더가 남아 있으면 빈 값으로 본다."""
+        v = self.title_var.get().strip()
+        return "" if v.startswith("모르면 비워") else v
+
     def _agent(self):
         return self._agent_key.get(self.agent_ko.get())
 
@@ -541,6 +558,7 @@ class App:
             mute=self.mute_var.get(),   # 시각 박기는 항상 켜짐(기본값)
             offset_s=float(self.offset_var.get()),
             target_s=secs, extra=self._extra(),
+            movie_title=self._title(),
             prefer=self._agent(),
             log=self._log, progress=self._progress, stop=self._stop))
 
@@ -555,6 +573,7 @@ class App:
         self._start(lambda: pipeline.run_script(
             self.paths["srt"], project_name=self.name_var.get().strip() or None,
             target_s=secs, extra=self._extra(),
+            movie_title=self._title(),
             prefer=self._agent(), offset_s=float(self.offset_var.get()),
             log=self._log, progress=self._progress, stop=self._stop))
 
