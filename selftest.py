@@ -573,6 +573,25 @@ def main():
     check("run_script 가 project_name 을 받는다",
           "project_name" in inspect.signature(pipeline.run_script).parameters)
     check("중단은 실패와 구분된다", issubclass(sg.GenStopped, sg.GenError))
+
+    # codex 는 --full-auto 를 없앴다 (0.147.0: "unexpected argument '--full-auto'").
+    # 그대로 두면 1단이 항상 튕기고, 뒤 단계는 읽기 전용이라 대본을 못 쓴다.
+    cx = sg.RUNNERS["codex"]["argv"]
+    check("codex 사다리에 --full-auto 없음",
+          all("--full-auto" not in a for a in cx))
+    check("1단이 쓰기 가능 모드", "--approve-for-me" in cx[0])
+    # --approve-for-me 와 --sandbox 는 상호 배타 — 같이 넣으면 codex 가 거부한다
+    check("--approve-for-me 와 --sandbox 를 같이 안 쓴다",
+          not any("--approve-for-me" in a and "--sandbox" in a for a in cx))
+    check("모든 단이 인자로 시작하지 않음", all(not a[0].startswith("-") for a in cx))
+
+    # 쓰기 거부는 인자 오류와 원인이 달라 따로 안내해야 한다
+    check("읽기 전용 메시지를 알아본다",
+          sg._looks_read_only("현재 세션이 읽기 전용이라 파일 생성이 차단됐습니다"))
+    check("permission denied 도 알아본다",
+          sg._looks_read_only("EACCES: permission denied, open 'draft.txt'"))
+    check("정상 출력은 오판하지 않는다",
+          not sg._looks_read_only("대본을 다 썼습니다. 총 172초 · 블록 9개."))
     check("쓰지 않는 results_dir 제거됨", not hasattr(pipeline, "results_dir"))
 
     # 폴더 이름 경쟁 — exists() 로 보고 나중에 mkdir 하면 두 실행이 같은 폴더를

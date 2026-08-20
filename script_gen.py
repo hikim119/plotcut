@@ -42,7 +42,14 @@ RUNNERS = {
         "extra_paths": [r"%APPDATA%\npm", r"%LOCALAPPDATA%\npm"],
         # `--skip-git-repo-check` 없으면 깃 저장소 밖에서 codex exec 이 거부한다:
         #   "Not inside a trusted directory and --skip-git-repo-check was not specified."
-        "argv": [["exec", "--skip-git-repo-check", "--full-auto", "{prompt}"],
+        #
+        # `--full-auto` 는 **최신 CLI 에서 삭제됐다.** codex-cli 0.147.0 실측:
+        #   error: unexpected argument '--full-auto' found
+        # 후임은 `--approve-for-me` — "승인 요청을 workspace-write 샌드박스로
+        # 자동 처리". 이게 없으면 세션이 읽기 전용이라 대본 파일을 못 쓴다:
+        #   "현재 세션이 읽기 전용이라 생성중_초안.txt 파일 생성이 차단됐습니다"
+        # `--approve-for-me` 와 `--sandbox` 는 **같이 못 쓴다**(상호 배타).
+        "argv": [["exec", "--skip-git-repo-check", "--approve-for-me", "{prompt}"],
                  ["exec", "--skip-git-repo-check",
                   "--sandbox", "workspace-write", "{prompt}"],
                  ["exec", "--skip-git-repo-check", "{prompt}"],
@@ -178,6 +185,21 @@ def status():
 
 
 # ── 프롬프트 ────────────────────────────────────────────────────────────────
+
+# 에이전트가 "읽기 전용이라 못 쓴다"고 끝낸 흔적. 인자를 못 알아들은 것과는
+# 원인이 달라서(권한 문제) 사다리를 내려가도 나아지지 않는다 — 따로 안내한다.
+_NO_WRITE = (
+    "읽기 전용", "쓰기 권한", "쓰기가 차단", "생성이 차단", "권한이 없",
+    "read-only", "readonly", "permission denied", "not permitted",
+    "operation not permitted", "cannot write", "unable to write",
+    "failed to write", "write access",
+)
+
+
+def _looks_read_only(out):
+    low = (out or "").lower()
+    return any(k in low for k in _NO_WRITE)
+
 
 def build_prompt(srt_path, out_path, target_s=180, extra=""):
     srt_path = Path(srt_path).resolve()
@@ -543,6 +565,18 @@ def generate(srt_path, out_path, target_s=180, extra="", prefer=None,
             continue
         break
 
+    if _looks_read_only(last):
+        raise GenError(
+            "%s 가 **읽기 전용**으로 돌아 대본 파일을 만들지 못했습니다.\n"
+            "  인자가 틀린 게 아니라 에이전트의 쓰기 권한 문제입니다.\n"
+            "  · %s 를 최신으로 올려 보세요 (오래된 버전은 쓰기 옵션 이름이 다릅니다)\n"
+            "  · 그래도 안 되면 PlotCut/runner.json 에 인자를 직접 적을 수 있습니다:\n"
+            '    {\"runner\": \"codex\", \"argv\": [\"exec\", \"--skip-git-repo-check\",\n'
+            '                                   \"--approve-for-me\", \"{prompt}\"]}\n'
+            "  쓰라고 준 경로: %s\n"
+            "  에이전트 출력(끝부분):\n%s"
+            % (spec["label"], spec["label"], staged,
+               "\n".join(("    " + l) for l in last.splitlines()[-12:])))
     raise GenError(
         "에이전트가 대본 파일을 만들지 못했습니다.\n"
         "  쓰라고 준 경로: %s\n"
