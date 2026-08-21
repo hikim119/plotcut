@@ -60,7 +60,7 @@ def main(argv=None):
     p.add_argument("--fps-scale", type=float, default=1.0)
     p.add_argument("--class", dest="prefer_class", default=None)
     p.add_argument("--scope", default="scene", choices=["scene", "full"],
-                   help="scene=영화 한 장면만 · full=영화 전체 요약")
+                   help="scene=영화 한 대목(1/5쯤)만 · full=영화 전체 요약")
 
     p = sub.add_parser("script", help="자막 → 대본 txt (에이전트 CLI 사용, 0원)")
     p.add_argument("srt")
@@ -73,7 +73,7 @@ def main(argv=None):
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
     p.add_argument("--scope", default="scene", choices=["scene", "full"],
-                   help="scene=영화 한 장면만 · full=영화 전체 요약")
+                   help="scene=영화 한 대목(1/5쯤)만 · full=영화 전체 요약")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
 
@@ -94,7 +94,7 @@ def main(argv=None):
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
     p.add_argument("--scope", default="scene", choices=["scene", "full"],
-                   help="scene=영화 한 장면만 · full=영화 전체 요약")
+                   help="scene=영화 한 대목(1/5쯤)만 · full=영화 전체 요약")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
     p.add_argument("--canvas", default="vertical",
@@ -423,7 +423,7 @@ def cmd_check(a):
                      % (delta, how, how2, "줄이세요" if delta > 0 else "늘리세요"))
 
     # 선택 범위 — 영화의 어디를 얼마나 썼는가.
-    # `한 장면` 이면 폭이 넓은 것을, `전체 요약` 이면 결말이 빠진 것을 잡는다.
+    # `한 대목` 이면 폭이 넓은 것을, `전체 요약` 이면 결말이 빠진 것을 잡는다.
     # 정답 3편이 전자를 통과하고 후자에 걸리는 것은 **정상**이다 — 그 3편은
     # 영화 한 시퀀스만 다룬 숏츠다.
     times = []
