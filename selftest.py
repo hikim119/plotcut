@@ -185,12 +185,12 @@ def style_tests():
           not _style_gate(_lean, 181.8), str(_style_gate(_lean, 181.8)))
 
 
-def scope_tests():
-    """선택 범위 — **테스트 자산이 없어도 돈다.** 픽스처가 대조 결과를 갖고 있다."""
+def ending_tests():
+    """결말 검사 — **테스트 자산이 없어도 돈다.** 픽스처가 대조 결과를 갖고 있다."""
     import json
     import quality as q
     print()
-    print("[16] 선택 범위 (quality.selection_*)")
+    print("[16] 결말 검사 (quality.selection_*)")
     gp = ROOT / "fixtures" / "selection_gold.json"
     if not gp.exists():
         check("범위 픽스처가 있다", False, str(gp))
@@ -198,9 +198,10 @@ def scope_tests():
     raw = json.loads(gp.read_text(encoding="utf-8"))
     gold = {k: v for k, v in raw.items() if not k.startswith("_")}
 
-    # ① 골든 — 정답 3편은 `scene` 에서 **전부 통과**해야 한다.
-    #    이게 깨지면 임계값이 틀린 것이지 대본이 틀린 게 아니다
-    #    (예전 SHORT_RATIO_MAX 가 father 를 걸었던 것과 같은 종류의 사고).
+    # 정답 3편 중 둘이 **걸리는 게 정상**이다. 그 셋은 영화 한 대목만 다룬 옛
+    # 숏츠(55% · 25% 에서 끝)고, 지금 도구는 결말이 있는 전체 요약을 만든다.
+    # 이걸 테스트가 명시적으로 인정하는 편이 낫다 — 나중에 "정답이 걸리네"
+    # 하고 임계를 낮추면 도구가 결말을 빼먹어도 아무도 모르게 된다.
     for name, v in sorted(gold.items()):
         times = [b[2] for b in v["blocks"]] + [v["blocks"][-1][3]]
         m = q.selection_metrics(times, v["movie_s"])
@@ -208,45 +209,26 @@ def scope_tests():
         near("%s 쓴 구간(분)" % name, m["span_min"], e["span_min"], 0.15)
         near("%s 시작 지점(%%)" % name, m["start_pct"], e["start_pct"], 1.0)
         near("%s 끝 지점(%%)" % name, m["end_pct"], e["end_pct"], 1.0)
-        w, n = q.selection_issues(m, "scene")
-        eq("%s 는 한 장면 모드를 통과한다" % name, len(w), e["scene_warns"])
+        w, n = q.selection_issues(m)
+        eq("%s 결말 경고" % name, len(w), e["ending_warns"])
+        if w:
+            check("경고가 결말 이야기다", "결말" in w[0], w[0])
         check("%s 범위를 참고로 찍는다" % name, any("쓴 구간" in x for x in n), str(n))
-        if "full_warns" in e:
-            # 정답 2편이 `full` 에서 걸리는 건 **정상**이다 — 그 둘은 영화
-            # 55% · 25% 지점에서 끝나는 한 장면짜리 숏츠다.
-            w2, _ = q.selection_issues(m, "full")
-            eq("%s 는 전체 요약 모드에선 결말 경고" % name, len(w2), e["full_warns"])
-            check("경고가 결말 이야기다", "결말" in w2[0], w2[0])
 
-    # ② 네거티브 — 도구가 뽑은 것(49.1분 · 100%까지)은 `scene` 에서 걸려야 한다.
-    #    이게 없으면 상한을 아무 값이나 넣어도 테스트가 통과한다.
+    # 결말까지 간 대본은 통과해야 한다. 이게 없으면 임계를 아무 값이나 넣게 된다.
     t = raw["_도구출력"]
-    m = {"span_min": t["span_min"], "start_pct": t["start_pct"],
-         "end_pct": t["end_pct"]}
-    w, _ = q.selection_issues(m, "scene")
-    eq("도구 출력은 한 장면 모드에서 걸린다", len(w), t["expect"]["scene_warns"])
-    check("걸리는 이유가 폭이다", "훑고" in w[0], w[0])
-    w, _ = q.selection_issues(m, "full")
-    eq("도구 출력은 전체 요약 모드는 통과", len(w), t["expect"]["full_warns"])
+    w, _ = q.selection_issues({"span_min": t["span_min"], "start_pct": t["start_pct"],
+                               "end_pct": t["end_pct"]})
+    eq("결말까지 간 대본은 통과", len(w), t["expect"]["ending_warns"])
 
-    # ③ 겹침이 없다 — 정답 최대 폭 < 상한 < 도구 폭.
-    #    이 순서가 깨지면 상한이 무의미해진다.
-    widest = max(v["expect"]["span_min"] for v in gold.values())
-    check("정답 최대 폭 < 상한 < 도구 폭",
-          widest < q.SPAN_MAX_MIN < t["span_min"],
-          "정답 %.1f · 상한 %.1f · 도구 %.1f" % (widest, q.SPAN_MAX_MIN, t["span_min"]))
+    # 폭은 이제 안 잰다 — 전체 요약이면 영화 전체를 훑는 게 정상이다.
+    check("폭 상한은 없다", not hasattr(q, "SPAN_MAX_MIN"))
+    w, _ = q.selection_issues({"span_min": 98.2, "start_pct": 2, "end_pct": 100})
+    eq("98분을 훑어도 결말이 있으면 통과", len(w), 0)
 
-    # ④ 폭은 **절대 분**이지 비율이 아니다. father 는 영화의 84%를 쓰지만
-    #    22분짜리 시트콤 1화라 통과해야 한다 — 비율로 재면 여기서 깨진다.
-    f = gold["father"]
-    check("22분 원본은 84%를 써도 통과한다",
-          f["expect"]["span_min"] / (f["movie_s"] / 60.0) > 0.80
-          and f["expect"]["scene_warns"] == 0,
-          "%.0f%%" % (100 * f["expect"]["span_min"] / (f["movie_s"] / 60.0)))
-
-    # ⑤ 시각이 하나도 없으면 아무 말도 안 한다 (자막 없는 대본).
-    eq("시각이 없으면 범위 판정을 안 한다", q.selection_metrics([], 6000), {})
-    eq("빈 지표는 경고도 참고도 없다", q.selection_issues({}, "scene"), ([], []))
+    # 시각이 하나도 없으면 아무 말도 안 한다 (자막 없는 대본).
+    eq("시각이 없으면 판정을 안 한다", q.selection_metrics([], 6000), {})
+    eq("빈 지표는 경고도 참고도 없다", q.selection_issues({}), ([], []))
 
 
 def main():
@@ -1084,69 +1066,8 @@ def main():
        [round(x["t_start"], 4) for x in _a["subs"]],
        [round(x["t_start"], 4) for x in _b["subs"]])
 
-    # ── [17] 「둘 다」 — 에이전트 CLI 없이 배선만 검사한다 ──────────────────
-    print()
-    print("[17] 「둘 다」 동시 생성")
-    import script_gen as _sg
-    import pipeline as _pl
-    _real = _sg.generate
-    _calls, _lk = [], threading.Lock()
-
-    def _fake(srt_path, out_path, target_s=180, extra="", movie_title="",
-              prefer=None, scope="full", work_dir=None, timeout=1800,
-              log=print, stop=None, progress=None):
-        with _lk:
-            _calls.append(scope)
-        for _i in range(1, 5):          # 실제처럼 시간을 끌어야 동시성이 드러난다
-            if progress:
-                progress(_i / 4.0)
-            time.sleep(0.25)
-        pathlib.Path(out_path).write_bytes(REF.read_bytes())
-        return pathlib.Path(out_path)
-
-    # 앞 실행이 중간에 죽었으면 폴더가 남아 있다. 남아 있으면 fresh_results_dir
-    # 가 _2 를 붙여 이름 검사가 깨진다 — 시작 전에도 치운다.
-    for _d in _pl.RESULTS.glob("_selftest_둘다*"):
-        shutil.rmtree(_d, ignore_errors=True)
-    _seen = []
-    try:
-        _sg.generate = _fake
-        _t0 = time.time()
-        _r = _pl.run_script(str(SRT), project_name="_selftest_둘다",
-                            scope="both", log=lambda m="": None,
-                            progress=_seen.append)
-        _el = time.time() - _t0
-    finally:
-        _sg.generate = _real
-    _dirs = sorted(_pl.RESULTS.glob("_selftest_둘다*"))
-    try:
-        eq("두 scope 로 한 번씩 부른다", sorted(_calls), ["full", "scene"])
-        eq("결과 폴더가 둘", len(_dirs), 2)
-        # 폴더가 다르면 `생성중_초안.txt` 충돌이 통째로 사라진다 — 이게 이
-        # 설계의 핵심이라 이름으로 못 박는다.
-        eq("폴더 이름에 꼬리표", sorted(d.name for d in _dirs),
-           ["_selftest_둘다_전체요약_대본만만들기", "_selftest_둘다_한대목_대본만만들기"])
-        # 직렬이면 2초, 동시면 1초. 1.6초를 경계로 둔다(느린 PC 여유).
-        check("직렬이 아니라 동시에 돈다", _el < 1.6, "%.2f초" % _el)
-        eq("both 에 둘 다 담긴다", sorted(_r["both"]), ["full", "scene"])
-        # GUI 탭에는 기본값이 실려야 한다. 「둘 다」에서 한 대목이 뜨면
-        # 사용자는 전체 요약이 안 만들어진 줄 안다.
-        check("GUI 탭 대본은 전체 요약",
-              "전체요약" in pathlib.Path(_r["script_path"]).parent.name,
-              _r["script_path"])
-        check("진행률이 단조 증가한다",
-              all(a <= b for a, b in zip(_seen, _seen[1:])), str(_seen[:6]))
-        eq("끝나면 1.0", _seen[-1], 1.0)
-    finally:
-        for _d in _dirs:
-            shutil.rmtree(_d, ignore_errors=True)
-
-    # CapCut 은 대본 하나에서 하나가 나온다 — build 는 「둘 다」를 받으면 안 된다
-    check("run_build 는 both 를 전체 요약으로 되돌린다",
-          'scope = "full"' in inspect.getsource(_pl.run_build))
-
     style_tests()
-    scope_tests()
+    ending_tests()
 
     print("\n" + "=" * 60)
     if _fail:

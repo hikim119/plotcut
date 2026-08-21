@@ -59,8 +59,6 @@ def main(argv=None):
     p.add_argument("--offset", type=float, default=0.0)
     p.add_argument("--fps-scale", type=float, default=1.0)
     p.add_argument("--class", dest="prefer_class", default=None)
-    p.add_argument("--scope", default="full", choices=["scene", "full"],
-                   help="full=영화 전체 요약(기본) · scene=한 대목(1/5쯤)만")
 
     p = sub.add_parser("script", help="자막 → 대본 txt (에이전트 CLI 사용, 0원)")
     p.add_argument("srt")
@@ -72,9 +70,6 @@ def main(argv=None):
     p.add_argument("--extra", default="", help="연출 지시 (예: 잭 이야기만)")
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
-    p.add_argument("--scope", default="full",
-                   choices=["full", "scene", "both"],
-                   help="full=영화 전체 요약(기본) · scene=한 대목 · both=둘 다")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
 
@@ -94,9 +89,6 @@ def main(argv=None):
     p.add_argument("--extra", default="")
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
-    p.add_argument("--scope", default="full",
-                   choices=["full", "scene", "both"],
-                   help="full=영화 전체 요약(기본) · scene=한 대목 · both=둘 다")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
     p.add_argument("--canvas", default="vertical",
@@ -134,7 +126,7 @@ def _run(a):
         import pipeline
         r = pipeline.run_script(a.srt, a.out, project_name=a.name,
                                 target_s=a.seconds, extra=a.extra,
-                                movie_title=a.title, scope=a.scope,
+                                movie_title=a.title,
                                 prefer=a.agent, log=print)
         print("\n대본: %s" % r["script_path"])
         return 0
@@ -145,7 +137,7 @@ def _run(a):
                            fps_scale=a.fps_scale, prefer_class=a.prefer_class,
                            draft_root=a.draft_root,
                            target_s=a.seconds, extra=a.extra,
-                           movie_title=a.title, scope=a.scope, prefer=a.agent,
+                           movie_title=a.title, prefer=a.agent,
                            freeze=a.freeze, mute=a.mute, log=print)
         return 0
     if a.cmd == "list":
@@ -425,9 +417,8 @@ def cmd_check(a):
                      % (delta, how, how2, "줄이세요" if delta > 0 else "늘리세요"))
 
     # 선택 범위 — 영화의 어디를 얼마나 썼는가.
-    # `한 대목` 이면 폭이 넓은 것을, `전체 요약` 이면 결말이 빠진 것을 잡는다.
-    # 정답 3편이 전자를 통과하고 후자에 걸리는 것은 **정상**이다 — 그 3편은
-    # 영화 한 시퀀스만 다룬 숏츠다.
+    # 결말까지 갔는지 본다. 정답 3편 중 둘이 여기 걸리는 것은 **정상**이다 —
+    # 그 셋은 영화 한 대목만 다룬 옛 숏츠고, 지금 도구는 전체 요약을 만든다.
     times = []
     for blk in doc["blocks"]:
         for it in blk["items"]:
@@ -438,7 +429,7 @@ def cmd_check(a):
             elif it.get("cues"):
                 times.append(it["cues"][0]["start_s"])
     sel = quality.selection_metrics(times, dur)
-    sw, sn = quality.selection_issues(sel, getattr(a, "scope", "full"))
+    sw, sn = quality.selection_issues(sel)
     warns += sw
     notes += sn
     if sel.get("max_jump_s"):

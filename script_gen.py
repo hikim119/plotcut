@@ -203,7 +203,7 @@ def _looks_read_only(out):
 
 
 def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
-                 plot_path=None, scope="full"):
+                 plot_path=None):
     srt_path = Path(srt_path).resolve()
     out_path = Path(out_path).resolve()
     movie_title = (movie_title or "").strip()
@@ -224,28 +224,6 @@ def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
         "   · 나레이션은 **말이 아니라 반응·상태 변화**를 적는다",
         "   · **영화의 말투를 그대로 써라.** 액션·코미디면 구어체, 문예물이면 문어체",
     ]
-    # 완성본 3편을 원본 자막과 짝지어 실측한 결과, 영화 두 편은 **12~24분짜리
-    # 한 시퀀스만** 쓰고 결말은 안 썼다 (55% · 25% 지점에서 끝). 도구는 같은
-    # 자막에서 49분을 훑고 100%까지 갔다. 그래서 어느 쪽인지 먼저 못 박는다.
-    if scope == "full":
-        lines += [
-            "· **범위: 영화 전체 요약.** 처음부터 결말까지 흐름을 따라간다.",
-            "   마지막 블록은 **결말 대사**로 끝낸다. 낚시로 끝내지 마라.",
-        ]
-    else:
-        lines += [
-            "· **범위: 한 대목.** 영화 전체를 훑지 마라 — 이게 가장 흔한 실패다.",
-            "   이야기 한 줄기가 **시작해서 닫히는 구간**을 통으로 고른다.",
-            "   · **장면 하나가 아니다.** 장면 하나로는 3분이 안 나온다 —",
-            "     실측으로 그 구간 안에 **대사 장면이 10~12개** 들어간다",
-            "   · 완성본 3편 실측: 쓴 구간이 **12분 · 18분 · 24분**",
-            "     (영화 길이의 **1/8 ~ 1/5**). 상한 30분",
-            "   · **결말까지 갈 필요 없다.** 3편 중 둘은 영화 55% · 25% 지점에서 끝난다",
-            "   · 고른 구간 **안에서는 대사를 촘촘히** 쓴다. 실측: 그 장면 자막을",
-            "     거의 그대로 다 옮겼다(숏츠 큐 ÷ 원본 큐 = 1.0). 띄엄띄엄 고르면",
-            "     화면이 비어 보인다",
-            "   · 큰 점프는 편당 한두 번이면 충분하다",
-        ]
     lines += [
         '· "%s" 의 ① 절들을 전문 읽어라. 포맷·문체 규칙·분량 공식이 거기 있다.' % RULES,
         "   · **첫 문단은 훅이다** (규칙 2). 2초 안에 주인공이 드러나게 한다",
@@ -304,8 +282,8 @@ def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
         # 그래서 **python 으로 시작하는 한 줄**로 준다.
         "· 그 다음 아래를 실행해 ✘ 를 고쳐라. **고쳐 쓰기는 최대 5번까지만** 하고,",
         "   그래도 남으면 남은 채로 끝내라 — 검산에 시간을 더 쓰지 마라.",
-        '   python "%s" check "%s" --srt "%s" --seconds %d --scope %s'
-        % (ROOT / "cli.py", out_path, srt_path, int(target_s), scope),
+        '   python "%s" check "%s" --srt "%s" --seconds %d'
+        % (ROOT / "cli.py", out_path, srt_path, int(target_s)),
         "   ✘ 가 안 줄어들면 그 자리에서 멈춰라 — 지시가 서로 상충한다는 뜻이다.",
         "   이 명령이 권한 문제로 실행되지 않으면 **그냥 건너뛰고 끝내라.**",
         "   소스 코드를 읽어 손으로 검산하지 마라.",
@@ -519,7 +497,7 @@ def _inside_workdir(path):
 
 
 def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
-             prefer=None, scope="full",
+             prefer=None,
              work_dir=None, timeout=1800, log=print, stop=None, progress=None):
     """에이전트를 돌려 대본 txt를 만든다. 반환: Path(out_path)."""
     found = find_runner(prefer)
@@ -593,7 +571,7 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
 
     with open(ptxt, "w", encoding="utf-8", newline="\n") as f:
         f.write(build_prompt(sub_for_agent, staged, target_s, extra, movie_title,
-                             plot_path=staged_plot, scope=scope))
+                             plot_path=staged_plot))
     prompt = ('"%s" 파일을 읽고, 거기 적힌 지시를 그대로 순서대로 수행해라.' % ptxt)
 
     log("  %s 로 대본을 만듭니다 — 몇 분 걸립니다" % spec["label"])

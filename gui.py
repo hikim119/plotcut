@@ -69,18 +69,6 @@ EXTRA_HINT = "\n".join([
 
 CANVAS_MAP = {"세로 9:16": "vertical", "정사각": "square", "가로 16:9": "horizontal"}
 CANVAS_KO = list(CANVAS_MAP)
-# 대본이 영화의 어디를 쓸지. 실측(완성본 3편 × 원본 자막 대조):
-#
-#     gentleman  111분 영화 → 23.6분 구간(1/5) 안의 대사 장면 12개
-#     robber      97분 영화 → 12.3분 구간(1/8) 안의 대사 장면 10개
-#
-# **`한 장면` 이 아니다.** 장면 하나로는 3분짜리 숏츠가 안 나온다 — 영화의
-# 1/8~1/5 을 잘라 그 안의 장면 열몇 개를 이어 붙인 것이다. 그래서 `한 대목`.
-# 내부 키는 `scene` 그대로 둔다(픽스처·selftest 가 물고 있어 바꿀 이득이 없다).
-SCOPE_MAP = {"영화 전체 요약": "full", "한 대목": "scene", "둘 다": "both"}
-SCOPE_KO = list(SCOPE_MAP)
-SCOPE_TIP = "둘 다 = 두 개를 동시에 만듭니다 (시간은 그대로, 사용량은 2배)"
-
 SLOTS = [
     ("script", "1.  타임라인 대본", "선택 — 비우면 영화 자막으로 만들어 줍니다", SCRIPT_EXTS),
     ("srt", "2.  영화 자막", "필수 — 대본의 대사를 찾을 원본 자막 (srt/smi/vtt/ass)", SUB_EXTS),
@@ -136,9 +124,6 @@ class App:
         self.secs_var = tk.StringVar(value="180")
         # 기본은 **끔** — 영화 소리를 100% 그대로 둔다.
         self.mute_var = tk.BooleanVar(value=False)
-        # 기본은 **영화 전체 요약**. `둘 다` 는 서로 다른 결과물 두 개를
-        # 동시에 만든다 — 기계가 우열을 못 정하므로 고르지 않고 둘 다 남긴다.
-        self.scope_ko = tk.StringVar(value=SCOPE_KO[0])
         self.agent_ko = tk.StringVar()
         self.auth_lbl = None
         self._frac = 0.0
@@ -304,15 +289,6 @@ class App:
         title(r, "옵션")
         chk(r, self.mute_var, "나레이션 구간 음소거",
             "나레이션 밑에서 원본 대사가 새는 구간을 지웁니다")
-        # 영화 전체를 훑을지 한 대목만 쓸지는 **문체보다 먼저** 정해지는 문제라
-        # 연출 지시에 묻어 두지 않고 칸으로 뺀다. 실측: 완성본 3편은 영화의
-        # 12~24분 구간만 썼고 둘은 결말도 안 썼다. 도구는 49분을 훑었다.
-        r = row()
-        title(r, "대본 범위")
-        tk.OptionMenu(r, self.scope_ko, *SCOPE_KO).pack(side="left")
-        tk.Label(r, text=SCOPE_TIP, bg=BG2, fg=TEXTMUT,
-                 font=("맑은 고딕", 8)).pack(side="left", padx=(6, 0))
-
         r = row()
         title(r, "대본 길이")
         tk.Entry(r, textvariable=self.secs_var, bg=BG3, fg=TEXT, width=5,
@@ -517,10 +493,6 @@ class App:
         v = self.extra_text.get("1.0", "end").strip()
         return "" if v == EXTRA_HINT.strip() else v
 
-    def _scope(self):
-        """대본 범위 → pipeline 이 쓰는 키."""
-        return SCOPE_MAP.get(self.scope_ko.get(), "scene")
-
     def _title(self):
         """영화 제목. 플레이스홀더가 남아 있으면 빈 값으로 본다."""
         v = self.title_var.get().strip()
@@ -598,7 +570,7 @@ class App:
             mute=self.mute_var.get(),   # 시각 박기는 항상 켜짐(기본값)
             offset_s=float(self.offset_var.get()),
             target_s=secs, extra=self._extra(),
-            movie_title=self._title(), scope=self._scope(),
+            movie_title=self._title(),
             prefer=self._agent(),
             log=self._log, progress=self._progress, stop=self._stop))
 
@@ -613,7 +585,7 @@ class App:
         self._start(lambda: pipeline.run_script(
             self.paths["srt"], project_name=self.name_var.get().strip() or None,
             target_s=secs, extra=self._extra(),
-            movie_title=self._title(), scope=self._scope(),
+            movie_title=self._title(),
             prefer=self._agent(), offset_s=float(self.offset_var.get()),
             log=self._log, progress=self._progress, stop=self._stop))
 
