@@ -13,8 +13,10 @@ import math
 import pathlib
 import re
 import sys
+import shutil
 import tempfile
 import threading
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent
 TEST = ROOT / "test"
@@ -1081,6 +1083,67 @@ def main():
     eq("자막 시각 불변",
        [round(x["t_start"], 4) for x in _a["subs"]],
        [round(x["t_start"], 4) for x in _b["subs"]])
+
+    # ── [17] 「둘 다」 — 에이전트 CLI 없이 배선만 검사한다 ──────────────────
+    print()
+    print("[17] 「둘 다」 동시 생성")
+    import script_gen as _sg
+    import pipeline as _pl
+    _real = _sg.generate
+    _calls, _lk = [], threading.Lock()
+
+    def _fake(srt_path, out_path, target_s=180, extra="", movie_title="",
+              prefer=None, scope="full", work_dir=None, timeout=1800,
+              log=print, stop=None, progress=None):
+        with _lk:
+            _calls.append(scope)
+        for _i in range(1, 5):          # 실제처럼 시간을 끌어야 동시성이 드러난다
+            if progress:
+                progress(_i / 4.0)
+            time.sleep(0.25)
+        pathlib.Path(out_path).write_bytes(REF.read_bytes())
+        return pathlib.Path(out_path)
+
+    # 앞 실행이 중간에 죽었으면 폴더가 남아 있다. 남아 있으면 fresh_results_dir
+    # 가 _2 를 붙여 이름 검사가 깨진다 — 시작 전에도 치운다.
+    for _d in _pl.RESULTS.glob("_selftest_둘다*"):
+        shutil.rmtree(_d, ignore_errors=True)
+    _seen = []
+    try:
+        _sg.generate = _fake
+        _t0 = time.time()
+        _r = _pl.run_script(str(SRT), project_name="_selftest_둘다",
+                            scope="both", log=lambda m="": None,
+                            progress=_seen.append)
+        _el = time.time() - _t0
+    finally:
+        _sg.generate = _real
+    _dirs = sorted(_pl.RESULTS.glob("_selftest_둘다*"))
+    try:
+        eq("두 scope 로 한 번씩 부른다", sorted(_calls), ["full", "scene"])
+        eq("결과 폴더가 둘", len(_dirs), 2)
+        # 폴더가 다르면 `생성중_초안.txt` 충돌이 통째로 사라진다 — 이게 이
+        # 설계의 핵심이라 이름으로 못 박는다.
+        eq("폴더 이름에 꼬리표", sorted(d.name for d in _dirs),
+           ["_selftest_둘다_전체요약_대본만만들기", "_selftest_둘다_한대목_대본만만들기"])
+        # 직렬이면 2초, 동시면 1초. 1.6초를 경계로 둔다(느린 PC 여유).
+        check("직렬이 아니라 동시에 돈다", _el < 1.6, "%.2f초" % _el)
+        eq("both 에 둘 다 담긴다", sorted(_r["both"]), ["full", "scene"])
+        # GUI 탭에는 기본값이 실려야 한다. 「둘 다」에서 한 대목이 뜨면
+        # 사용자는 전체 요약이 안 만들어진 줄 안다.
+        check("GUI 탭 대본은 전체 요약",
+              "전체요약" in pathlib.Path(_r["script_path"]).parent.name,
+              _r["script_path"])
+        check("진행률이 단조 증가한다",
+              all(a <= b for a, b in zip(_seen, _seen[1:])), str(_seen[:6]))
+        eq("끝나면 1.0", _seen[-1], 1.0)
+    finally:
+        for _d in _dirs:
+            shutil.rmtree(_d, ignore_errors=True)
+
+    # CapCut 은 대본 하나에서 하나가 나온다 — build 는 「둘 다」를 받으면 안 된다
+    check("run_build 는 both 를 전체 요약으로 되돌린다",
+          'scope = "full"' in inspect.getsource(_pl.run_build))
 
     style_tests()
     scope_tests()

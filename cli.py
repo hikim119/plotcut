@@ -59,8 +59,8 @@ def main(argv=None):
     p.add_argument("--offset", type=float, default=0.0)
     p.add_argument("--fps-scale", type=float, default=1.0)
     p.add_argument("--class", dest="prefer_class", default=None)
-    p.add_argument("--scope", default="scene", choices=["scene", "full"],
-                   help="scene=영화 한 대목(1/5쯤)만 · full=영화 전체 요약")
+    p.add_argument("--scope", default="full", choices=["scene", "full"],
+                   help="full=영화 전체 요약(기본) · scene=한 대목(1/5쯤)만")
 
     p = sub.add_parser("script", help="자막 → 대본 txt (에이전트 CLI 사용, 0원)")
     p.add_argument("srt")
@@ -72,8 +72,9 @@ def main(argv=None):
     p.add_argument("--extra", default="", help="연출 지시 (예: 잭 이야기만)")
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
-    p.add_argument("--scope", default="scene", choices=["scene", "full"],
-                   help="scene=영화 한 대목(1/5쯤)만 · full=영화 전체 요약")
+    p.add_argument("--scope", default="full",
+                   choices=["full", "scene", "both"],
+                   help="full=영화 전체 요약(기본) · scene=한 대목 · both=둘 다")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
 
@@ -93,8 +94,9 @@ def main(argv=None):
     p.add_argument("--extra", default="")
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
-    p.add_argument("--scope", default="scene", choices=["scene", "full"],
-                   help="scene=영화 한 대목(1/5쯤)만 · full=영화 전체 요약")
+    p.add_argument("--scope", default="full",
+                   choices=["full", "scene", "both"],
+                   help="full=영화 전체 요약(기본) · scene=한 대목 · both=둘 다")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
     p.add_argument("--canvas", default="vertical",
@@ -436,7 +438,7 @@ def cmd_check(a):
             elif it.get("cues"):
                 times.append(it["cues"][0]["start_s"])
     sel = quality.selection_metrics(times, dur)
-    sw, sn = quality.selection_issues(sel, getattr(a, "scope", "scene"))
+    sw, sn = quality.selection_issues(sel, getattr(a, "scope", "full"))
     warns += sw
     notes += sn
     if sel.get("max_jump_s"):

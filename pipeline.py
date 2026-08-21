@@ -5,9 +5,11 @@ GUI와 CLI가 같은 함수를 부른다. log/progress/stop 을 주입받아 GUI
 스레드에서 돌려도 UI를 막지 않는다.
 """
 
+import concurrent.futures as _cf
 import hashlib
 import json
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -288,12 +290,129 @@ def _cuts_of(pl):
 # 자막 파일 옆에 떨어뜨리면 남의 폴더(영화·자막 보관함)를 어지럽힌다.
 SCRIPT_DIR_SUFFIX = "_대본만만들기"
 
+# 「둘 다」로 만들 때 폴더 이름에 붙는 꼬리표. 나중에 어느 쪽인지 알아야 한다.
+SCOPE_TAG = {"full": "전체요약", "scene": "한대목"}
+
+
+
+class _Merge:
+    """두 실행의 진행률을 막대 하나로 합친다.
+
+    쌍이 끝나는 시점은 **늦은 쪽**이라 아직 도는 실행들의 **최솟값**을 쓴다.
+    한쪽이 먼저 끝나 1.0 을 불러도 막대가 튀면 안 되고, 한 번 올라간 값은
+    내리지 않는다 — 막대가 뒤로 가면 고장 난 것처럼 보인다.
+    끝났거나 실패한 실행은 최솟값에서 뺀다(먼저 죽은 쪽이 막대를 붙잡는다).
+    """
+
+    def __init__(self, n, out):
+        self._v = [0.0] * n
+        self._live = set(range(n))
+        self._max = 0.0
+        self._out = out
+        self._lock = threading.Lock()
+
+    def slot(self, i):
+        def _p(f):
+            with self._lock:
+                self._v[i] = float(f)
+                self._emit()
+        return _p
+
+    def done(self, i):
+        with self._lock:
+            self._live.discard(i)
+            self._emit()
+
+    def _emit(self):
+        cur = min((self._v[i] for i in self._live), default=1.0)
+        if cur > self._max:
+            self._max = cur
+        if self._out:
+            self._out(self._max)
+
+
+def _run_script_both(srt_path, project_name=None, target_s=180.0, extra="",
+                     movie_title="", prefer=None, offset_s=0.0, fps_scale=1.0,
+                     prefer_class=None, log=print, progress=_noop, stop=None):
+    """`영화 전체 요약` 과 `한 대목` 을 **동시에** 하나씩 만든다.
+
+    두 대본은 고르는 게 아니라 **서로 다른 결과물**이다 — 기계가 우열을 못
+    정한다. 그래서 둘 다 남기고 사람이 고른다.
+
+    폴더를 따로 쓰는 게 핵심이다. `script_gen` 이 스테이지하는 다섯 파일
+    (`생성중_초안.txt` 등)이 고정 이름이라, 한 폴더를 공유하면 두 에이전트에게
+    **같은 출력 경로**를 지시하게 되고 성공 판정이 남의 대본을 본다.
+    폴더가 다르면 그 충돌이 통째로 사라져 `run_script` 본문을 안 고쳐도 된다.
+
+    동시에 돌리므로 걸리는 시간은 한 개일 때와 거의 같다(사용량은 2배).
+    """
+    base = project_name or movie_base(srt_path=srt_path)
+    order = ["full", "scene"]
+    mg = _Merge(len(order), progress)
+    log("대본 2개를 동시에 만듭니다 — 영화 전체 요약 · 한 대목")
+
+    def _one(i, sc):
+        tag = SCOPE_TAG[sc]
+        try:
+            return run_script(
+                srt_path, project_name="%s_%s" % (base, tag),
+                target_s=target_s, extra=extra, movie_title=movie_title,
+                scope=sc, prefer=prefer, offset_s=offset_s,
+                fps_scale=fps_scale, prefer_class=prefer_class,
+                # 두 실행의 로그가 섞이면 어느 쪽 이야기인지 알 수 없다.
+                log=lambda m="": log("%s │ %s" % (tag, str(m).strip())),
+                progress=mg.slot(i), stop=stop)
+        finally:
+            mg.done(i)
+
+    with _cf.ThreadPoolExecutor(max_workers=len(order)) as pool:
+        futs = [pool.submit(_one, i, sc) for i, sc in enumerate(order)]
+    # `with` 를 빠져나온 **뒤에** 판정한다. 먼저 난 예외를 바로 올리면
+    # 다른 쪽이 아직 파일을 쓰는 중에 폴더를 지우러 간다.
+    res, errs = {}, []
+    for sc, f in zip(order, futs):
+        try:
+            res[sc] = f.result()
+        except Stopped:
+            raise
+        except Exception as e:                                   # noqa: BLE001
+            errs.append((SCOPE_TAG[sc], e))
+    if not res:
+        # 같은 러너·같은 자막이라 실패 이유가 같은 경우가 대부분이다.
+        msgs = [str(e) for _, e in errs]
+        if len(set(msgs)) == 1:
+            raise type(errs[0][1])(
+                "%s%s  (전체요약·한대목 둘 다 같은 이유로 실패했습니다)"
+                % (msgs[0], chr(10)))
+        raise type(errs[0][1])((chr(10) * 2).join(
+            "[%s] %s" % (t, m) for (t, _), m in zip(errs, msgs)))
+    for tag, e in errs:
+        log("  ⚠ %s 는 실패했습니다 — %s" % (tag, str(e).splitlines()[0]))
+
+    log("")
+    for sc in order:
+        if sc in res:
+            log("  %s: %s" % (SCOPE_TAG[sc], res[sc]["script_path"]))
+    log("  두 대본은 서로 다른 결과물입니다 — 읽어 보고 고르세요.")
+    # GUI 탭에는 기본값(전체 요약)을 싣는다. 하나만 성공했으면 그것을.
+    main = res.get("full") or res.get("scene")
+    out = dict(main)
+    out["both"] = {sc: res[sc]["script_path"] for sc in res}
+    return out
+
+
 def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
-               movie_title="", scope="scene",
+               movie_title="", scope="full",
                prefer=None, offset_s=0.0, fps_scale=1.0, prefer_class=None,
                log=print, progress=_noop, stop=None):
     """자막 → 대본 txt 까지만. CapCut은 만들지 않는다."""
     import script_gen
+    if scope == "both":
+        return _run_script_both(
+            srt_path, project_name=project_name, target_s=target_s, extra=extra,
+            movie_title=movie_title, prefer=prefer, offset_s=offset_s,
+            fps_scale=fps_scale, prefer_class=prefer_class,
+            log=log, progress=progress, stop=stop)
     t0 = time.time()
     base = movie_base(srt_path=srt_path)
     # out 을 직접 준 건 "내가 위치를 정하겠다"는 뜻이다 — 빈 결과 폴더를
@@ -365,10 +484,16 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
 def run_build(script_path, srt_path, movie_path=None, project_name=None,
               canvas="vertical", fit="fit", offset_s=0.0, fps_scale=1.0,
               prefer_class=None, draft_root=None,
-              target_s=180.0, extra="", movie_title="", scope="scene",
+              target_s=180.0, extra="", movie_title="", scope="full",
               prefer=None, freeze=True, mute=False,
               log=print, progress=_noop, stop=None):
     t0 = time.time()
+    if scope == "both":
+        # CapCut 프로젝트는 대본 하나에서 하나가 나온다. 두 개를 만들면
+        # 어느 쪽을 편집하는지 알 수 없다. 대본 두 개가 필요하면
+        # [대본만 만들기] 를 쓰는 게 맞다.
+        log("  「둘 다」는 대본만 만들기에서 씁니다 — 여기서는 영화 전체 요약으로 갑니다.")
+        scope = "full"
     made_script = False
     if not script_path and not srt_path:
         raise guards.GuardError("자막 파일이 필요합니다.")

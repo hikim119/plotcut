@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -202,7 +203,7 @@ def _looks_read_only(out):
 
 
 def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
-                 plot_path=None, scope="scene"):
+                 plot_path=None, scope="full"):
     srt_path = Path(srt_path).resolve()
     out_path = Path(out_path).resolve()
     movie_title = (movie_title or "").strip()
@@ -380,8 +381,18 @@ def expected_secs(key):
     return past[len(past) // 2]
 
 
+# 「둘 다」는 두 실행이 **동시에** 끝날 수 있다. 읽고-고치고-쓰기가 겹치면
+# 한쪽 기록이 통째로 사라진다 — 진행률 추정이 오래된 값에 묶인다.
+_TIMING_LOCK = threading.Lock()
+
+
 def record_secs(key, secs):
     """실제 걸린 시간을 남긴다 — 다음 실행의 진행률 기준이 된다."""
+    with _TIMING_LOCK:
+        return _record_secs(key, secs)
+
+
+def _record_secs(key, secs):
     try:
         data = json.loads(TIMING.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -508,7 +519,7 @@ def _inside_workdir(path):
 
 
 def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
-             prefer=None, scope="scene",
+             prefer=None, scope="full",
              work_dir=None, timeout=1800, log=print, stop=None, progress=None):
     """에이전트를 돌려 대본 txt를 만든다. 반환: Path(out_path)."""
     found = find_runner(prefer)

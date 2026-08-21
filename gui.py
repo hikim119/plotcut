@@ -77,9 +77,9 @@ CANVAS_KO = list(CANVAS_MAP)
 # **`한 장면` 이 아니다.** 장면 하나로는 3분짜리 숏츠가 안 나온다 — 영화의
 # 1/8~1/5 을 잘라 그 안의 장면 열몇 개를 이어 붙인 것이다. 그래서 `한 대목`.
 # 내부 키는 `scene` 그대로 둔다(픽스처·selftest 가 물고 있어 바꿀 이득이 없다).
-SCOPE_MAP = {"한 대목": "scene", "영화 전체 요약": "full"}
+SCOPE_MAP = {"영화 전체 요약": "full", "한 대목": "scene", "둘 다": "both"}
 SCOPE_KO = list(SCOPE_MAP)
-SCOPE_TIP = "한 대목 = 영화의 1/5쯤을 잘라 그 안의 장면 열몇 개 (완성본 3편이 쓴 방식)"
+SCOPE_TIP = "둘 다 = 두 개를 동시에 만듭니다 (시간은 그대로, 사용량은 2배)"
 
 SLOTS = [
     ("script", "1.  타임라인 대본", "선택 — 비우면 영화 자막으로 만들어 줍니다", SCRIPT_EXTS),
@@ -136,7 +136,8 @@ class App:
         self.secs_var = tk.StringVar(value="180")
         # 기본은 **끔** — 영화 소리를 100% 그대로 둔다.
         self.mute_var = tk.BooleanVar(value=False)
-        # 기본은 **한 대목** — 완성본 3편이 전부 그렇다(영화 12~24분 구간만 씀).
+        # 기본은 **영화 전체 요약**. `둘 다` 는 서로 다른 결과물 두 개를
+        # 동시에 만든다 — 기계가 우열을 못 정하므로 고르지 않고 둘 다 남긴다.
         self.scope_ko = tk.StringVar(value=SCOPE_KO[0])
         self.agent_ko = tk.StringVar()
         self.auth_lbl = None
