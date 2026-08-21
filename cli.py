@@ -31,7 +31,8 @@ SHORT_RATIO_MAX = 0.40
 # 대사 몇 줄마다 나레이션 하나 — 이 비율이 문장력보다 자연스러움을 좌우한다.
 # 내 대본 실측 5.3 / 7.7. 아래로 내려가면 '요약 + 인용문'이 된다.
 DLG_PER_NARR_MIN = 4.0
-ENDING_RATIO = 0.70
+# ENDING_RATIO 는 quality.py 로 옮겼다 — 선택 범위 지표와 한 곳에 있어야
+# "전체 요약 모드에서만 본다"는 규칙이 한눈에 보인다.
 LEN_TOL = 0.15
 # 아래 둘은 잘 나온 대본의 실측값이다. 이게 무너지면 '이야기'가 아니라
 # '요약 + 인용문'으로 읽힌다.
@@ -58,6 +59,8 @@ def main(argv=None):
     p.add_argument("--offset", type=float, default=0.0)
     p.add_argument("--fps-scale", type=float, default=1.0)
     p.add_argument("--class", dest="prefer_class", default=None)
+    p.add_argument("--scope", default="scene", choices=["scene", "full"],
+                   help="scene=영화 한 장면만 · full=영화 전체 요약")
 
     p = sub.add_parser("script", help="자막 → 대본 txt (에이전트 CLI 사용, 0원)")
     p.add_argument("srt")
@@ -69,6 +72,8 @@ def main(argv=None):
     p.add_argument("--extra", default="", help="연출 지시 (예: 잭 이야기만)")
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
+    p.add_argument("--scope", default="scene", choices=["scene", "full"],
+                   help="scene=영화 한 장면만 · full=영화 전체 요약")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
 
@@ -88,6 +93,8 @@ def main(argv=None):
     p.add_argument("--extra", default="")
     p.add_argument("--title", default="",
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
+    p.add_argument("--scope", default="scene", choices=["scene", "full"],
+                   help="scene=영화 한 장면만 · full=영화 전체 요약")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
     p.add_argument("--canvas", default="vertical",
@@ -125,7 +132,7 @@ def _run(a):
         import pipeline
         r = pipeline.run_script(a.srt, a.out, project_name=a.name,
                                 target_s=a.seconds, extra=a.extra,
-                                movie_title=a.title,
+                                movie_title=a.title, scope=a.scope,
                                 prefer=a.agent, log=print)
         print("\n대본: %s" % r["script_path"])
         return 0
@@ -136,7 +143,7 @@ def _run(a):
                            fps_scale=a.fps_scale, prefer_class=a.prefer_class,
                            draft_root=a.draft_root,
                            target_s=a.seconds, extra=a.extra,
-                           movie_title=a.title, prefer=a.agent,
+                           movie_title=a.title, scope=a.scope, prefer=a.agent,
                            freeze=a.freeze, mute=a.mute, log=print)
         return 0
     if a.cmd == "list":
@@ -296,6 +303,7 @@ def cmd_check(a):
             warns.append("블록%d(%s)가 블록%d(%s)보다 앞으로 돌아갑니다."
                          % (i + 2, _hms(starts[i + 1]), i + 1, _hms(starts[i])))
 
+    import quality
     nars = script_io.narrations(doc)
 
     # 구성 — 나레이션(N)과 대사(D)가 블록마다 어떻게 놓였는지.
@@ -343,7 +351,6 @@ def cmd_check(a):
     # ── 나레이션 문체 — 내 대본 3편(33문장)이 기준이다 ─────────────────────
     # 임계값·근거는 quality.py 에. 정답 3편은 전부 통과하고 도구가 뽑은 대본은
     # 5개가 걸리도록 역산했다 (selftest [14] 가 그걸 고정한다).
-    import quality
     m = quality.narration_metrics([n["text"] for n in nars])
     if not m["n"]:
         # 문체 지표를 전부 `if nars:` 안에 두면 **나레이션을 안 쓰는 것으로
@@ -405,11 +412,26 @@ def cmd_check(a):
         warns.append("목표에서 %+.0f초 벗어납니다 — %s 또는 %s을 %s."
                      % (delta, how, how2, "줄이세요" if delta > 0 else "늘리세요"))
 
-    # 결말
-    last = max((s for s in starts if s is not None), default=0.0)
-    if dur and last < dur * ENDING_RATIO:
-        warns.append("마지막 장면이 영화의 %.0f%% 지점입니다 — 결말이 빠졌을 수 있습니다."
-                     % (last / dur * 100))
+    # 선택 범위 — 영화의 어디를 얼마나 썼는가.
+    # `한 장면` 이면 폭이 넓은 것을, `전체 요약` 이면 결말이 빠진 것을 잡는다.
+    # 정답 3편이 전자를 통과하고 후자에 걸리는 것은 **정상**이다 — 그 3편은
+    # 영화 한 시퀀스만 다룬 숏츠다.
+    times = []
+    for blk in doc["blocks"]:
+        for it in blk["items"]:
+            if it["kind"] != "dialogue":
+                continue
+            if it.get("span"):
+                times.append(it["span"][0])
+            elif it.get("cues"):
+                times.append(it["cues"][0]["start_s"])
+    sel = quality.selection_metrics(times, dur)
+    sw, sn = quality.selection_issues(sel, getattr(a, "scope", "scene"))
+    warns += sw
+    notes += sn
+    if sel.get("max_jump_s"):
+        notes.append("나레이션 한 문장이 건너뛰는 영화 시간 최대 %.0f초"
+                     % sel["max_jump_s"])
     if dur and cues:
         ratio = cues[-1]["end_s"] / dur
         if not (0.90 <= ratio <= 1.04):

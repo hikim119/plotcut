@@ -289,7 +289,7 @@ def _cuts_of(pl):
 SCRIPT_DIR_SUFFIX = "_대본만만들기"
 
 def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
-               movie_title="",
+               movie_title="", scope="scene",
                prefer=None, offset_s=0.0, fps_scale=1.0, prefer_class=None,
                log=print, progress=_noop, stop=None):
     """자막 → 대본 txt 까지만. CapCut은 만들지 않는다."""
@@ -310,7 +310,7 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
     # 에이전트가 도는 동안 경과/예상으로 실제로 차오른다 (0 → 90%)
     try:
         path = script_gen.generate(srt_path, out, target_s=target_s, extra=extra,
-                                   movie_title=movie_title,
+                                   movie_title=movie_title, scope=scope,
                                    prefer=prefer, work_dir=rdir,
                                    log=log, stop=stop,
                                    progress=lambda f: progress(0.90 * f))
@@ -365,7 +365,7 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
 def run_build(script_path, srt_path, movie_path=None, project_name=None,
               canvas="vertical", fit="fit", offset_s=0.0, fps_scale=1.0,
               prefer_class=None, draft_root=None,
-              target_s=180.0, extra="", movie_title="",
+              target_s=180.0, extra="", movie_title="", scope="scene",
               prefer=None, freeze=True, mute=False,
               log=print, progress=_noop, stop=None):
     t0 = time.time()
@@ -397,7 +397,7 @@ def run_build(script_path, srt_path, movie_path=None, project_name=None,
                 try:
                     script_path = script_gen.generate(
                         srt_path, out, target_s=target_s, extra=extra,
-                        movie_title=movie_title, prefer=prefer,
+                        movie_title=movie_title, scope=scope, prefer=prefer,
                         work_dir=rdir, log=log, stop=stop,
                         progress=lambda f: progress(0.90 * f))
                 except script_gen.GenStopped:

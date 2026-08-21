@@ -85,3 +85,73 @@ def narration_metrics(nars):
         "conj": sum(1 for t in nars if t.startswith(CONJ)) / n,
         "over": [t for t in nars if len(t) > LONG_CHARS],
     }
+
+
+# ── 선택 범위 — 영화의 **어디를 얼마나** 쓰는가 ─────────────────────────────
+# 완성본 3편을 **원본 자막과 짝지어** 실측했다 (대사 블록 32개 전수 대조).
+#
+#     대본        영화     숏츠    쓴 구간   영화 대비   시작~끝
+#     father      22분     160초   18.5분     84%       9% ~ 92%   ← 22분 시트콤 1화
+#     gentleman  111분     111초   23.6분     21%      34% ~ 55%
+#     robber      97분     150초   12.3분     13%      13% ~ 25%
+#     ────────────────────────────────────────────────────────────
+#     도구 출력  100분       —     49.1분     49%      51% ~ 100%
+#
+# 두 가지가 갈린다.
+#   ① **폭** — 정답은 12~24분짜리 한 시퀀스만 쓴다. 도구는 49분을 훑는다.
+#   ② **결말** — 정답 2편은 영화 55% · 25% 지점에서 끝난다. 도구는 100%까지 간다.
+#
+# **폭은 비율이 아니라 절대 분으로 잰다.** 비율로 재면 22분짜리 시트콤(84%)이
+# 걸린다 — 원본이 짧으면 한 장면이 전체의 대부분이다. 분으로 재면 정답 최대
+# 23.6분 · 도구 49.1분으로 겹침 없이 갈린다.
+SPAN_MAX_MIN = 30.0    # 한 장면 모드 상한 — 정답 최대 23.6분 · 도구 49.1분
+ENDING_RATIO = 0.70    # 전체 요약 모드에서만 — 마지막이 이 앞이면 결말 누락 의심
+SCOPES = ("scene", "full")
+
+# 안 재는 것: **사용 구간 안 채택 밀도**(정답 18/30/60% · 도구 15%)와
+# **나레이션 한 문장이 건너뛰는 최장 시간**(정답 123~630초 · 도구 414초).
+# 둘 다 정답과 도구가 겹친다 — ⚠ 로 올리면 소음만 는다. 참고로만 찍는다.
+
+
+def selection_metrics(times, movie_s=None):
+    """대사 문단이 가리키는 원본 시각들 → 어디를 얼마나 썼는지.
+
+    times   원본 영화 기준 초. None 은 걸러낸다 (시각도 자막도 못 찾은 문단).
+    movie_s 영화 길이(초). 없으면 비율 항목이 빠진다.
+    """
+    ts = sorted(t for t in times if t is not None)
+    if not ts:
+        return {}
+    lo, hi = ts[0], ts[-1]
+    m = {"n": len(ts), "lo": lo, "hi": hi,
+         "span_s": hi - lo, "span_min": (hi - lo) / 60.0}
+    if len(ts) > 1:
+        m["max_jump_s"] = max(ts[i + 1] - ts[i] for i in range(len(ts) - 1))
+    if movie_s:
+        m["movie_s"] = movie_s
+        m["start_pct"] = 100.0 * lo / movie_s
+        m["end_pct"] = 100.0 * hi / movie_s
+        m["cover"] = (hi - lo) / movie_s
+    return m
+
+
+def selection_issues(m, scope="scene"):
+    """범위 판정 → (warns, notes). ✘ 는 안 낸다 — 사람이 일부러 그럴 수 있다."""
+    warns, notes = [], []
+    if not m:
+        return warns, notes
+    if "start_pct" in m:
+        notes.append("쓴 구간 %.1f분 (영화의 %.0f%% ~ %.0f%% 지점)"
+                     % (m["span_min"], m["start_pct"], m["end_pct"]))
+    else:
+        notes.append("쓴 구간 %.1f분" % m["span_min"])
+    if scope == "scene":
+        if m["span_min"] > SPAN_MAX_MIN:
+            warns.append(
+                "영화 %.0f분어치를 훑고 있습니다 — 한 장면 모드의 상한은 %.0f분입니다."
+                " 완성본 3편 실측 12~24분. 장면 하나를 골라 통으로 쓰세요."
+                % (m["span_min"], SPAN_MAX_MIN))
+    elif "end_pct" in m and m["end_pct"] < ENDING_RATIO * 100:
+        warns.append("마지막 장면이 영화의 %.0f%% 지점입니다 — 결말이 빠졌을 수 있습니다."
+                     % m["end_pct"])
+    return warns, notes

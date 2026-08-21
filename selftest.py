@@ -158,6 +158,70 @@ def style_tests():
     eq("중경삼림도 ~죠 1개", _rm["jyo"], 1)
 
 
+def scope_tests():
+    """선택 범위 — **테스트 자산이 없어도 돈다.** 픽스처가 대조 결과를 갖고 있다."""
+    import json
+    import quality as q
+    print()
+    print("[16] 선택 범위 (quality.selection_*)")
+    gp = ROOT / "fixtures" / "selection_gold.json"
+    if not gp.exists():
+        check("범위 픽스처가 있다", False, str(gp))
+        return
+    raw = json.loads(gp.read_text(encoding="utf-8"))
+    gold = {k: v for k, v in raw.items() if not k.startswith("_")}
+
+    # ① 골든 — 정답 3편은 `scene` 에서 **전부 통과**해야 한다.
+    #    이게 깨지면 임계값이 틀린 것이지 대본이 틀린 게 아니다
+    #    (예전 SHORT_RATIO_MAX 가 father 를 걸었던 것과 같은 종류의 사고).
+    for name, v in sorted(gold.items()):
+        times = [b[2] for b in v["blocks"]] + [v["blocks"][-1][3]]
+        m = q.selection_metrics(times, v["movie_s"])
+        e = v["expect"]
+        near("%s 쓴 구간(분)" % name, m["span_min"], e["span_min"], 0.15)
+        near("%s 시작 지점(%%)" % name, m["start_pct"], e["start_pct"], 1.0)
+        near("%s 끝 지점(%%)" % name, m["end_pct"], e["end_pct"], 1.0)
+        w, n = q.selection_issues(m, "scene")
+        eq("%s 는 한 장면 모드를 통과한다" % name, len(w), e["scene_warns"])
+        check("%s 범위를 참고로 찍는다" % name, any("쓴 구간" in x for x in n), str(n))
+        if "full_warns" in e:
+            # 정답 2편이 `full` 에서 걸리는 건 **정상**이다 — 그 둘은 영화
+            # 55% · 25% 지점에서 끝나는 한 장면짜리 숏츠다.
+            w2, _ = q.selection_issues(m, "full")
+            eq("%s 는 전체 요약 모드에선 결말 경고" % name, len(w2), e["full_warns"])
+            check("경고가 결말 이야기다", "결말" in w2[0], w2[0])
+
+    # ② 네거티브 — 도구가 뽑은 것(49.1분 · 100%까지)은 `scene` 에서 걸려야 한다.
+    #    이게 없으면 상한을 아무 값이나 넣어도 테스트가 통과한다.
+    t = raw["_도구출력"]
+    m = {"span_min": t["span_min"], "start_pct": t["start_pct"],
+         "end_pct": t["end_pct"]}
+    w, _ = q.selection_issues(m, "scene")
+    eq("도구 출력은 한 장면 모드에서 걸린다", len(w), t["expect"]["scene_warns"])
+    check("걸리는 이유가 폭이다", "훑고" in w[0], w[0])
+    w, _ = q.selection_issues(m, "full")
+    eq("도구 출력은 전체 요약 모드는 통과", len(w), t["expect"]["full_warns"])
+
+    # ③ 겹침이 없다 — 정답 최대 폭 < 상한 < 도구 폭.
+    #    이 순서가 깨지면 상한이 무의미해진다.
+    widest = max(v["expect"]["span_min"] for v in gold.values())
+    check("정답 최대 폭 < 상한 < 도구 폭",
+          widest < q.SPAN_MAX_MIN < t["span_min"],
+          "정답 %.1f · 상한 %.1f · 도구 %.1f" % (widest, q.SPAN_MAX_MIN, t["span_min"]))
+
+    # ④ 폭은 **절대 분**이지 비율이 아니다. father 는 영화의 84%를 쓰지만
+    #    22분짜리 시트콤 1화라 통과해야 한다 — 비율로 재면 여기서 깨진다.
+    f = gold["father"]
+    check("22분 원본은 84%를 써도 통과한다",
+          f["expect"]["span_min"] / (f["movie_s"] / 60.0) > 0.80
+          and f["expect"]["scene_warns"] == 0,
+          "%.0f%%" % (100 * f["expect"]["span_min"] / (f["movie_s"] / 60.0)))
+
+    # ⑤ 시각이 하나도 없으면 아무 말도 안 한다 (자막 없는 대본).
+    eq("시각이 없으면 범위 판정을 안 한다", q.selection_metrics([], 6000), {})
+    eq("빈 지표는 경고도 참고도 없다", q.selection_issues({}, "scene"), ([], []))
+
+
 def main():
     if not SRT.exists() or not REF.exists():
         print("테스트 자료가 없습니다 (%s). 건너뜁니다." % TEST)
@@ -994,6 +1058,7 @@ def main():
        [round(x["t_start"], 4) for x in _b["subs"]])
 
     style_tests()
+    scope_tests()
 
     print("\n" + "=" * 60)
     if _fail:

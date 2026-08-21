@@ -69,6 +69,11 @@ EXTRA_HINT = "\n".join([
 
 CANVAS_MAP = {"세로 9:16": "vertical", "정사각": "square", "가로 16:9": "horizontal"}
 CANVAS_KO = list(CANVAS_MAP)
+# 대본이 영화의 어디를 쓸지. 실측(완성본 3편 × 원본 자막 대조)에서 기본은
+# 명확히 `한 장면` 이다 — 영화 12~24분 구간만 쓰고 둘은 결말도 안 썼다.
+SCOPE_MAP = {"한 장면": "scene", "영화 전체 요약": "full"}
+SCOPE_KO = list(SCOPE_MAP)
+SCOPE_TIP = "한 장면 = 결정적인 시퀀스 하나만 (완성본 3편이 쓴 방식)"
 
 SLOTS = [
     ("script", "1.  타임라인 대본", "선택 — 비우면 영화 자막으로 만들어 줍니다", SCRIPT_EXTS),
@@ -125,6 +130,8 @@ class App:
         self.secs_var = tk.StringVar(value="180")
         # 기본은 **끔** — 영화 소리를 100% 그대로 둔다.
         self.mute_var = tk.BooleanVar(value=False)
+        # 기본은 **한 장면** — 완성본 3편이 전부 그렇다(영화 12~24분 구간만 씀).
+        self.scope_ko = tk.StringVar(value=SCOPE_KO[0])
         self.agent_ko = tk.StringVar()
         self.auth_lbl = None
         self._frac = 0.0
@@ -290,6 +297,15 @@ class App:
         title(r, "옵션")
         chk(r, self.mute_var, "나레이션 구간 음소거",
             "나레이션 밑에서 원본 대사가 새는 구간을 지웁니다")
+        # 영화 전체를 훑을지 한 장면만 쓸지는 **문체보다 먼저** 정해지는 문제라
+        # 연출 지시에 묻어 두지 않고 칸으로 뺀다. 실측: 완성본 3편은 영화의
+        # 12~24분 구간만 썼고 둘은 결말도 안 썼다. 도구는 49분을 훑었다.
+        r = row()
+        title(r, "대본 범위")
+        tk.OptionMenu(r, self.scope_ko, *SCOPE_KO).pack(side="left")
+        tk.Label(r, text=SCOPE_TIP, bg=BG2, fg=TEXTMUT,
+                 font=("맑은 고딕", 8)).pack(side="left", padx=(6, 0))
+
         r = row()
         title(r, "대본 길이")
         tk.Entry(r, textvariable=self.secs_var, bg=BG3, fg=TEXT, width=5,
@@ -494,6 +510,10 @@ class App:
         v = self.extra_text.get("1.0", "end").strip()
         return "" if v == EXTRA_HINT.strip() else v
 
+    def _scope(self):
+        """대본 범위 → pipeline 이 쓰는 키."""
+        return SCOPE_MAP.get(self.scope_ko.get(), "scene")
+
     def _title(self):
         """영화 제목. 플레이스홀더가 남아 있으면 빈 값으로 본다."""
         v = self.title_var.get().strip()
@@ -571,7 +591,7 @@ class App:
             mute=self.mute_var.get(),   # 시각 박기는 항상 켜짐(기본값)
             offset_s=float(self.offset_var.get()),
             target_s=secs, extra=self._extra(),
-            movie_title=self._title(),
+            movie_title=self._title(), scope=self._scope(),
             prefer=self._agent(),
             log=self._log, progress=self._progress, stop=self._stop))
 
@@ -586,7 +606,7 @@ class App:
         self._start(lambda: pipeline.run_script(
             self.paths["srt"], project_name=self.name_var.get().strip() or None,
             target_s=secs, extra=self._extra(),
-            movie_title=self._title(),
+            movie_title=self._title(), scope=self._scope(),
             prefer=self._agent(), offset_s=float(self.offset_var.get()),
             log=self._log, progress=self._progress, stop=self._stop))
 
