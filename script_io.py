@@ -304,6 +304,53 @@ def _pool(cues, win):
     return [c for c in cues if c["start_s"] < b + TOL and c["end_s"] > a - TOL]
 
 
+def _verify_span(it, cues, eps=0.05):
+    """`@시각` 이 박힌 대사를 자막과 **다시** 대조한다. 자막이 있을 때만 부른다.
+
+    `_match_all` 은 span 이 있으면 자막을 안 본다 — 그게 이 형식의 목적이다
+    (자막 없이 대본+영화만으로 만들 수 있어야 한다). 그런데 `check` 에 자막을
+    줘도 똑같이 건너뛰어서, **대사를 통째로 다른 말로 바꾼 대본이 강등 0 ·
+    경고 0 으로 통과했다**(실측). 그 구멍을 여기서 막는다.
+
+    오탐 위험을 먼저 쟀다: 실제 대본 5편 291개 span 을 이 방식으로 대조했더니
+    **전수 유사도 1.000** 이었다.
+
+    결과는 **새 키**(`span_cues` / `span_ratio`)에만 담는다. `it["cues"]` 를
+    채우면 layout 이 조용히 달라진다 — 자막 노출이 PRE 만큼 밀리고, 되감기
+    경고가 LayoutError raise 로 승격되고, "컷 시각 1프레임" 회귀가 깨진다.
+
+    반환: None(정상) | "없음" | "어긋남"
+    """
+    a, b = it["span"]
+    inside = [c for c in cues if c["end_s"] > a + eps and c["start_s"] < b - eps]
+    it["span_cues"] = inside
+    if not inside:
+        it["span_ratio"] = 0.0
+        return "없음"
+    want = sig(" ".join(" ".join(c["lines"]) for c in inside))
+    got = sig(it["text"])
+    if not want or not got:
+        it["span_ratio"] = 1.0
+        return None
+    r = difflib.SequenceMatcher(None, want, got).ratio()
+    it["span_ratio"] = round(r, 3)
+    return None if r >= 0.75 else "어긋남"
+
+
+def audit_spans(doc, cues):
+    """`@시각` 대본 전체를 대조한다. 반환: [(블록번호, item, 사유)]"""
+    out = []
+    if not cues:
+        return out
+    for bi, it in items(doc):
+        if it["kind"] != "dialogue" or not it.get("span") or it.get("cue_ref"):
+            continue
+        why = _verify_span(it, cues)
+        if why:
+            out.append((bi, it, why))
+    return out
+
+
 def _candidates(pool, s):
     """(첫 큐, 마지막 큐) 후보 목록. 서명 → 연속 병합 → difflib 순."""
     exact = [c for c in pool if sig(c["text"]) == s]
@@ -350,7 +397,8 @@ def _pick(cands, prev_idx):
 def _match_all(blocks, cues, warnings, log):
     stats = {"dialogue": 0, "by_sig": 0, "by_merge": 0, "by_diff": 0,
              "by_ref": 0, "by_time": 0, "demoted": 0, "ambiguous": 0,
-             "reused": 0, "overstuffed": 0}
+             "reused": 0, "overstuffed": 0,
+             "time_ok": 0, "time_mismatch": 0, "time_nocue": 0}
     seen_global = {}
     for bi, blk in enumerate(blocks):
         pool = _pool(cues, blk["win"])
@@ -361,10 +409,33 @@ def _match_all(blocks, cues, warnings, log):
                 continue
             stats["dialogue"] += 1
 
-            # 시각 앵커가 있으면 자막을 아예 안 본다 — 그게 이 형식의 목적이다.
+            # 시각 앵커가 있으면 **매칭은** 자막을 안 본다 — 그게 이 형식의
+            # 목적이다(자막 없이 대본+영화만으로 만들 수 있어야 한다).
+            # 다만 자막을 줬으면 **텍스트가 맞는지는 확인한다.** 안 그러면
+            # 대사를 통째로 지어내도 강등 0 · 경고 0 으로 통과한다(실측).
+            # 컷 위치는 여전히 span 이 권위값이다 — it["cues"] 를 채우지 않는다.
             if it.get("span"):
                 it["note"] = "시각"
                 stats["by_time"] += 1
+                if cues:
+                    why = _verify_span(it, cues)
+                    if why == "없음":
+                        stats["time_nocue"] += 1
+                        warnings.append(
+                            "블록%d %s 구간에 자막이 하나도 없습니다 — 대사를 "
+                            "지어냈거나 시각이 틀렸습니다: %r"
+                            % (bi + 1, fmt_span(*it["span"]), it["text"][:28]))
+                    elif why == "어긋남":
+                        stats["time_mismatch"] += 1
+                        got = " ".join(" ".join(c["lines"])
+                                       for c in it.get("span_cues") or [])
+                        warnings.append(
+                            "블록%d 그 시각의 자막과 대사가 다릅니다 "
+                            "(일치도 %.2f) — 대본 %r / 자막 %r"
+                            % (bi + 1, it.get("span_ratio", 0),
+                               it["text"][:32], got[:32]))
+                    else:
+                        stats["time_ok"] += 1
                 continue
 
             # `#476` 앵커가 있으면 텍스트 대조를 건너뛴다. 한국어로 갈아끼운

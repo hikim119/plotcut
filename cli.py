@@ -190,8 +190,19 @@ def cmd_check(a):
     print("  블록 %d · 대사 문단 %d · 나레이션 %d"
           % (len(doc["blocks"]), st["dialogue"],
              len(script_io.narrations(doc))))
-    print("  매칭: 서명 %d · 2큐병합 %d · 유사 %d · 강등 %d"
-          % (st["by_sig"], st["by_merge"], st["by_diff"], st["demoted"]))
+    # `시각` 을 안 찍으면 frozen 대본이 "매칭 0 · 강등 0" 으로 보여 **완벽한 줄
+    # 착각한다.** 실제로는 매칭을 한 번도 시도하지 않은 것이다.
+    _tm = ("" if not st.get("by_time") else
+           " · 시각 %d(대조 %d·불일치 %d·큐없음 %d)"
+           % (st["by_time"], st.get("time_ok", 0),
+              st.get("time_mismatch", 0), st.get("time_nocue", 0)))
+    print("  매칭: 서명 %d · 2큐병합 %d · 유사 %d%s · 강등 %d"
+          % (st["by_sig"], st["by_merge"], st["by_diff"], _tm, st["demoted"]))
+    if st.get("time_mismatch") or st.get("time_nocue"):
+        errors.append(
+            "`@시각` 대본의 대사 %d개가 그 시각의 자막과 다릅니다 — "
+            "지어냈거나 시각이 틀렸습니다."
+            % (st.get("time_mismatch", 0) + st.get("time_nocue", 0)))
 
     # 번역 줄 — 자막이 한국어가 아니면 **전부** 번역이 붙어야 한다.
     # 안 붙으면 외국어가 그대로 화면에 나가므로 경고가 아니라 오류다.

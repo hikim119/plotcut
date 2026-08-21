@@ -951,6 +951,48 @@ def main():
     check("test/ 를 건드리지 않았다", not (added or changed or gone),
           "새로 생김 %s · 바뀜 %s · 사라짐 %s" % (added, changed, gone))
 
+    print()
+    print("[15] `@시각` 우회 차단")
+    # 예전엔 span 이 있으면 자막을 아예 안 봐서 **대사를 통째로 지어내도
+    # 강등 0 · 경고 0** 으로 통과했다 (실측). 자막을 줬을 때만 대조한다.
+    _d = script_io.read(ref, cues, log=lambda *_: None)
+    _p = layout.build(_d, cues, 6159.104, fps=24.0, log=lambda *_: None)
+    layout.apply_headers(_d, _p["headers"])
+    layout.apply_spans(_d, _p)
+    _frozen = script_io.write(_d)
+
+    _ok = script_io.read(_frozen, cues, log=lambda *_: None)
+    eq("정상 frozen — 불일치 0", _ok["stats"]["time_mismatch"], 0)
+    eq("정상 frozen — 전부 대조됨", _ok["stats"]["time_ok"], _ok["stats"]["by_time"])
+    eq("정상 frozen — 경고 0 (오탐 없음)", len(_ok["warnings"]), 0)
+
+    _line = [l for l in _frozen.splitlines() if l.startswith("@")][0]
+    _bad = _frozen.replace(_line, _line.split(" ", 1)[0] + " 완전히 지어낸 대사입니다", 1)
+    _tam = script_io.read(_bad, cues, log=lambda *_: None)
+    eq("대사를 지어내면 잡는다", _tam["stats"]["time_mismatch"], 1)
+    check("경고 문구에 자막 원문이 있다",
+          any("자막" in w and "다릅니다" in w for w in _tam["warnings"]))
+
+    # 자막을 안 주면 지금과 완전히 동일하게 동작해야 한다 (자급자족이 이 형식의 목적)
+    _no = script_io.read(_frozen, [], log=lambda *_: None)
+    eq("자막 없으면 대조 안 함", _no["stats"]["time_ok"], 0)
+    eq("자막 없으면 경고 0", len(_no["warnings"]), 0)
+
+    # **layout 입력을 건드리면 안 된다** — it["cues"] 를 채우면 자막 노출이
+    # PRE 만큼 밀리고 되감기 경고가 raise 로 승격된다
+    _sp = [it for _, it in script_io.items(_ok) if it.get("span")]
+    check("span 아이템이 실재", len(_sp) > 20, str(len(_sp)))
+    eq("it['cues'] 를 안 채운다", sum(1 for it in _sp if it["cues"]), 0)
+    check("결과는 새 키에만", all("span_ratio" in it for it in _sp))
+    _a = layout.build(_ok, cues, 6159.104, fps=24.0, log=lambda *_: None)
+    _b = layout.build(_no, [], 6159.104, fps=24.0, log=lambda *_: None)
+    eq("컷 시각 불변",
+       [round(x["src0"], 4) for x in _a["segments"]],
+       [round(x["src0"], 4) for x in _b["segments"]])
+    eq("자막 시각 불변",
+       [round(x["t_start"], 4) for x in _a["subs"]],
+       [round(x["t_start"], 4) for x in _b["subs"]])
+
     style_tests()
 
     print("\n" + "=" * 60)
