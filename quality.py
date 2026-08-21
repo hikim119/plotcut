@@ -38,6 +38,18 @@ NOUNEND_MAX = 0.40                 # 정답 최대 30% · 도구 최소 44%
 INTERVAL_LO, INTERVAL_HI = 6.0, 16.0   # 정답 9.3~15.0 · 도구 16.1~21.0
 FINAL_MAX = 0.05                   # 완결형 `~다.` — 정답 34문장에 0개
 TAIL_CHARS = 14                    # 마지막 문단 — 정답 7/3/4자 · 도구 19자
+# 한 종결어미가 몰리면 낭독이 단조로워진다. **`~고` 하나만 재면 안 갈린다** —
+# 정답 father 가 45%로 도구(43%)보다 높다. 그래서 `~고`가 아니라 **최빈 어미**에
+# 걸고, 값은 정답 최대(45%)와 잡아야 할 출력(58%) 사이에 둔다.
+#
+#     정답 father     ~고5 ~는데3 명사2 ~죠1   최빈 45%
+#     정답 gentleman  ~는데5 ~고4 명사2 ~죠1   최빈 42%
+#     정답 robber     ~는데4 명사3 ~고2 ~죠1   최빈 40%
+#     도구 출력       ~고7 명사3 ~죠1 ~는데1   최빈 58%   ← 잡을 것
+#
+# 표본이 10~12문장이라 **한 문장이 8~10%p** 다. father 가 `~고` 하나만 늘어도
+# 55%가 된다 — 그래서 ✘ 가 아니라 ⚠ 다. 고치라는 게 아니라 알려 주는 값이다.
+SKEW_MAX = 0.50
 ITEM_MIN, ITEM_MAX = 5, 34         # 한 덩어리 (정답 7~31)
 RUN_MAX = 2                        # 연속 나레이션 (정답 최대 2)
 GAP_MAX = 60.0                     # 나레이션 없는 최장 구간 (정답 최대 50.9초)
@@ -47,6 +59,11 @@ MIN_SAMPLE = 6                     # 비율 지표는 이 개수 미만이면 �
 CONJ = ("그때", "하지만", "곧바로", "그 말에", "결국", "그렇게", "일단", "아까",
         "갑자기", "그런데", "그리고", "사실", "정작", "그제야", "그러자",
         "그러다", "얼마 전", "이윽고")
+
+
+# 화면에 찍을 이름. `_ending()` 이 돌려주는 키와 짝이다.
+ENDING_KO = {"neunde": "~는데", "jyo": "~죠", "conn": "~고",
+             "final": "완결형", "noun": "명사"}
 
 
 def _ending(t):
@@ -81,6 +98,8 @@ def narration_metrics(nars):
         "neunde": end.count("neunde") / n,
         "conn": end.count("conn") / n,
         "jyo": end.count("jyo"),
+        "skew": max(end.count(k) for k in set(end)) / n,
+        "skew_kind": ENDING_KO[max(set(end), key=end.count)],
         "final_ratio": end.count("final") / n,
         "conj": sum(1 for t in nars if t.startswith(CONJ)) / n,
         "over": [t for t in nars if len(t) > LONG_CHARS],

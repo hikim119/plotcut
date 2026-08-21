@@ -360,9 +360,11 @@ def cmd_check(a):
         interval = pl["total_s"] / m["n"]
         print("  나레이션 %d개 · 중앙 %d자 (평균 %.0f · 최대 %d) · %.1f초에 하나"
               % (m["n"], m["median"], m["mean"], m["max"], interval))
-        print("  종결: ~는데 %.0f%% · ~고 %.0f%% · 명사 %.0f%% · ~죠 %d개 · 완결형 %.0f%%"
+        print("  종결: ~는데 %.0f%% · ~고 %.0f%% · 명사 %.0f%% · ~죠 %d개 · "
+              "완결형 %.0f%% · 최빈 %s %.0f%%"
               % (100 * m["neunde"], 100 * m["conn"], 100 * m["nounend"],
-                 m["jyo"], 100 * m["final_ratio"]))
+                 m["jyo"], 100 * m["final_ratio"],
+                 m["skew_kind"], 100 * m["skew"]))
 
         def _bad(msg):
             errors.append("문체 — " + msg)
@@ -391,6 +393,14 @@ def cmd_check(a):
         if m["final_ratio"] > quality.FINAL_MAX:
             _bad("완결형(`~다.`)이 %.0f%%입니다 — 내 대본 33문장에 0개입니다."
                  % (100 * m["final_ratio"]))
+        # 편중은 ✘ 가 아니라 ⚠ 다. 표본이 10~12문장이라 한 문장이 8~10%p 이고,
+        # 정답 father 도 45%까지 간다 — 고치라는 게 아니라 알려 주는 값이다.
+        if m["skew"] > quality.SKEW_MAX:
+            warns.append(
+                "나레이션이 %s 로만 %.0f%% 끝납니다 (기준 %.0f%% 이하 · "
+                "내 대본 40/42/45%%) — 낭독이 단조로워집니다. 몇 개를 %s 로 바꾸세요."
+                % (m["skew_kind"], 100 * m["skew"], 100 * quality.SKEW_MAX,
+                   "`~는데`" if m["skew_kind"] != "~는데" else "`~고`"))
         for n in nars:
             if not (quality.ITEM_MIN <= len(n["text"]) <= quality.ITEM_MAX):
                 warns.append("나레이션 길이 %d자: %s" % (len(n["text"]), n["text"][:30]))
