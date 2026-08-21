@@ -623,6 +623,41 @@ def main():
     cx = sg.RUNNERS["codex"]["argv"]
     # effort 를 낮추면 대본이 나빠진다 (실측: low 는 완결형으로 끊고 대사를
     # 다시 설명한다). check 로는 안 잡히므로 인자로 못 박는다.
+    # 문체 예시가 **내 대본**이어야 한다. 중경삼림(중앙 30자)을 보여 주면
+    # 에이전트가 그걸 베껴 출력이 25자로 길어진다 (실측).
+    _sty = (ROOT / "template" / "style_example.txt").read_text(encoding="utf-8")
+    check("문체 예시가 내 대본이다", "나레이션 34문장 전문" in _sty)
+    check("문체 예시에 중경삼림 대사가 없다",
+          "663" not in _sty and "페이" not in _sty)
+    for _k in ("중앙 16자", "~는데", "~죠", "다섯에 하나만", "14자를 절대 안 넘는다"):
+        check("문체 예시에 '%s'" % _k, _k in _sty)
+    # 정답 34문장이 전수 1회씩 실렸는지 (표본으로 확인)
+    for _n in ("일진은 좀 쫄았고", "그대로 멘탈이 나가버렸고",
+               "말빨에 말문이 막힌 일진은 화가나 결국 칼을 꺼내버렸는데",
+               "결국 인내심에 한계가 온 미키"):
+        eq("문체 예시에 %r 한 번" % _n[:14], _sty.count(_n), 1)
+
+    # 프롬프트 — 문체 예시가 규칙 문서보다 **앞**에 와야 베낀다
+    _pr = sg.build_prompt(SRT, "o.txt", 180)
+    check("프롬프트가 문체 예시를 먼저 가리킨다",
+          _pr.index("style_example.txt") < _pr.index("AGENTS.md"))
+    # 없는 앵커를 가리키면 에이전트가 그 항목을 통째로 건너뛴다
+    check("없는 절 §구성 을 안 가리킨다", "§구성" not in _pr)
+    check("AGENTS.md 도 §구성 을 안 가리킨다",
+          "§구성" not in (ROOT / "AGENTS.md").read_text(encoding="utf-8"))
+    # `cd …` 로 시작하면 allowlist Bash(python:*) 에 안 걸려 검증이 통째로 생략된다
+    check("검증 명령이 python 으로 시작한다",
+          not any(l.strip().startswith("cd ") for l in _pr.splitlines()))
+    check("검증 명령이 절대경로 cli.py",
+          any("cli.py" in l and "check" in l and l.strip().startswith("python ")
+              for l in _pr.splitlines()))
+    # 통계를 잘못 옮긴 자리 — 원문은 "문단당 인용 큐 94%가 1개"다
+    check("한 문단 = 자막 '큐' 하나", "자막 큐 하나" in _pr)
+    check("'자막 한 줄' 오기 없음", "한 문단 = 자막 한 줄" not in _pr)
+    # 실측값이 프롬프트에 박혔는지
+    for _k in ("중앙 16자", "8~15초에 하나", "14자 이하 짧은 대사"):
+        check("프롬프트에 '%s'" % _k, _k in _pr)
+
     check("effort 를 낮추지 않는다",
           all("--effort" not in a for a in sg.RUNNERS["claude"]["argv"]))
 
