@@ -56,6 +56,108 @@ def near(name, got, want, tol):
     check(name, abs(got - want) <= tol, "got %.3f, want %.3f ±%.3f" % (got, want, tol))
 
 
+def _style_gate(nars, dur):
+    """quality 임계값을 적용해 걸린 항목 이름을 돌려준다."""
+    import quality as q
+    m = q.narration_metrics(nars)
+    bad = []
+    if not m["n"]:
+        return ["나레이션0"]
+    if not (q.MEDIAN_LO <= m["median"] <= q.MEDIAN_HI):
+        bad.append("중앙")
+    if m["long_ratio"] > q.LONG_RATIO_MAX:
+        bad.append("21자초과")
+    if m["nounend"] > q.NOUNEND_MAX:
+        bad.append("명사")
+    if not (q.INTERVAL_LO <= dur / m["n"] <= q.INTERVAL_HI):
+        bad.append("간격")
+    if m["jyo"] < 1:
+        bad.append("~죠")
+    if m["final_ratio"] > q.FINAL_MAX:
+        bad.append("완결형")
+    return bad
+
+
+def style_tests():
+    """문체 계측 — **테스트 자산이 없어도 돈다.** 받아 쓴 사람 PC 에서도 회귀가 필요하다."""
+    import json
+    import quality as q
+    print()
+    print("[14] 문체 계측 (quality.py)")
+    gp = ROOT / "fixtures" / "narration_gold.json"
+    if not gp.exists():
+        check("정답 픽스처가 있다", False, str(gp))
+        return
+    gold = {k: v for k, v in
+            json.loads(gp.read_text(encoding="utf-8")).items()
+            if not k.startswith("_")}
+
+    # ① 골든 — 정답 3편이 임계값을 **전부 통과**해야 한다.
+    #    하나라도 걸리면 임계값이 틀린 것이지 대본이 틀린 게 아니다.
+    for name, v in sorted(gold.items()):
+        m = q.narration_metrics(v["narrations"])
+        for k, want in v["expect"].items():
+            got = m[k] if k != "interval" else v["duration_s"] / m["n"]
+            if isinstance(want, float):      # 비율은 픽스처와 같은 자리에서 비교
+                got = round(got, 1 if k == "interval" else 3)
+            eq("%s %s" % (name, k), got, want)
+        eq("%s 문체 통과" % name, _style_gate(v["narrations"], v["duration_s"]), [])
+
+    # ② 네거티브 — 도구가 실제로 뽑은 대본은 **걸려야** 한다.
+    #    이게 없으면 아무 값이나 넣어도 통과하는 임계값을 만들게 된다.
+    tool = ["좋아하는 남자의 집에 몰래 들어왔다가 딱 걸려버린 여자",
+            "얼마 전, 663의 연인은 이별 편지를 남겼는데",
+            "그 편지 안에는 그의 집 열쇠와",
+            "그 말에 페이는 열쇠를 들고 그의 집으로 향했고",
+            "그렇게 남몰래 그의 집을 조금씩 바꾸는 동안",
+            "정작 663은 누군가 다녀간 흔적을 보면서도",
+            "위기를 넘긴 뒤 그의 곁에서 잠들어버린 페이",
+            "하지만 약속 시간이 지나도록 페이는 오지 않았고",
+            "그녀가 남긴 것은 1년 뒤로 향하는 티켓 한 장",
+            "그리고 정확히 1년 뒤"]
+    hit = _style_gate(tool, 180.4)
+    check("도구 출력은 걸린다", len(hit) >= 4, str(hit))
+    for k in ("중앙", "명사", "~죠"):
+        check("도구 출력이 '%s' 로 걸린다" % k, k in hit, str(hit))
+
+    # ③ 나레이션을 지워서 회피할 수 없다 — 간격이 무한대가 된다
+    eq("나레이션 0개는 걸린다", _style_gate([], 180.0), ["나레이션0"])
+    eq("나레이션 2개만 남겨도 걸린다",
+       "간격" in _style_gate(tool[:2], 180.4), True)
+
+    # ④ 짧은 나레이션은 문제가 아니다 — father 는 15자 미만이 절반이 넘는다.
+    #    옛 SHORT_RATIO_MAX=0.40 은 **정답 본인을 걸었다**. 회귀로 못 박는다
+    f = gold["father"]["narrations"]
+    short = sum(1 for t in f if len(t) < 15) / len(f)
+    check("father 는 짧은 줄이 절반 넘는다", short > 0.5, "%.0f%%" % (100 * short))
+    eq("그래도 통과한다", _style_gate(f, gold["father"]["duration_s"]), [])
+
+    # ⑤ 종결 분류가 정답 분포를 재현하는가
+    allnar = [t for v in gold.values() for t in v["narrations"]]
+    m = q.narration_metrics(allnar)
+    eq("정답 33문장", m["n"], 33)
+    eq("완결형 0개", m["final_ratio"], 0.0)
+    check("~는데 가 가장 많다", m["neunde"] >= 0.30, "%.0f%%" % (100 * m["neunde"]))
+    check("명사 마무리는 다섯에 하나", 0.15 <= m["nounend"] <= 0.30,
+          "%.0f%%" % (100 * m["nounend"]))
+    eq("~죠 는 편당 하나 = 3개", m["jyo"], 3)
+
+    # ⑥ 중경삼림 레퍼런스는 **걸리는 게 정상이다** — 문예물이고 이 도구의
+    #    문체 기준은 숏츠다. 기대값을 박아 두면 "정본이 걸린다"가 버그가
+    #    아니라 의도임이 코드에 남는다.
+    _ref = ["좋아하는 남자의 집에 몰래 들어왔다가 딱 걸려버린 여자",
+            "사실 얼마 전, 663의 전 여자친구는 그에게 편지 한 통을 남겼는데",
+            "그런데 그 편지 안에는", "그의 집 열쇠가 들어 있었고",
+            "663을 몰래 좋아하던 페이는 결국 그 열쇠를 들고 그의 집에 들어가기 시작하죠"]
+    _hit = _style_gate(_ref, 168.5)
+    check("중경삼림 예시는 문체 기준에 걸린다 (의도)", len(_hit) >= 2, str(_hit))
+    check("걸리는 이유는 길이다", "중앙" in _hit and "21자초과" in _hit, str(_hit))
+    # 그런데 종결·~죠 는 정답과 같다 — 문예물이어도 문장을 안 닫는 건 같다
+    _rm = q.narration_metrics(_ref)
+    eq("중경삼림도 완결형 0", _rm["final_ratio"], 0.0)
+    eq("중경삼림도 ~죠 1개", _rm["jyo"], 1)
+
+
 def main():
     if not SRT.exists() or not REF.exists():
         print("테스트 자료가 없습니다 (%s). 건너뜁니다." % TEST)
@@ -626,7 +728,7 @@ def main():
     # 문체 예시가 **내 대본**이어야 한다. 중경삼림(중앙 30자)을 보여 주면
     # 에이전트가 그걸 베껴 출력이 25자로 길어진다 (실측).
     _sty = (ROOT / "template" / "style_example.txt").read_text(encoding="utf-8")
-    check("문체 예시가 내 대본이다", "나레이션 34문장 전문" in _sty)
+    check("문체 예시가 내 대본이다", "나레이션 33문장 전문" in _sty)
     check("문체 예시에 중경삼림 대사가 없다",
           "663" not in _sty and "페이" not in _sty)
     for _k in ("중앙 16자", "~는데", "~죠", "다섯에 하나만", "14자를 절대 안 넘는다"):
@@ -848,6 +950,8 @@ def main():
     gone = sorted(set(_TEST_BEFORE) - set(after))
     check("test/ 를 건드리지 않았다", not (added or changed or gone),
           "새로 생김 %s · 바뀜 %s · 사라짐 %s" % (added, changed, gone))
+
+    style_tests()
 
     print("\n" + "=" * 60)
     if _fail:

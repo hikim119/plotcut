@@ -285,27 +285,7 @@ def cmd_check(a):
             warns.append("블록%d(%s)가 블록%d(%s)보다 앞으로 돌아갑니다."
                          % (i + 2, _hms(starts[i + 1]), i + 1, _hms(starts[i])))
 
-    # 나레이션 문체
     nars = script_io.narrations(doc)
-    if nars:
-        lens = [len(n["text"]) for n in nars]
-        avg = sum(lens) / len(lens)
-        short = sum(1 for L in lens if L < NARR_MIN + 10) / len(lens)
-        print("  나레이션 길이: 평균 %.0f자 (최소 %d · 최대 %d)" % (avg, min(lens), max(lens)))
-        for n in nars:
-            if not (NARR_MIN <= len(n["text"]) <= NARR_MAX):
-                warns.append("나레이션 길이 %d자: %s" % (len(n["text"]), n["text"][:30]))
-            if re.search(r"(다|요)\.?$", n["text"]):
-                warns.append("완결형으로 끊긴 나레이션 — 다음으로 넘어가지 않고 문장이 닫힙니다"
-                             " (정답 19줄에 0줄): %s" % n["text"][:34])
-        if not (NARR_AVG_LO <= avg <= NARR_AVG_HI):
-            warns.append("나레이션 평균 길이가 %.0f자입니다 (권장 %d~%d)."
-                         % (avg, NARR_AVG_LO, NARR_AVG_HI))
-        if short > SHORT_RATIO_MAX:
-            warns.append("짧은 나레이션이 %.0f%%입니다 (권장 %.0f%% 이하)."
-                         % (short * 100, SHORT_RATIO_MAX * 100))
-        for name, n in _unknown_names(nars, cues):
-            notes.append("'%s' 는 자막에 없는 이름입니다 (%d회 사용)." % (name, n))
 
     # 구성 — 나레이션(N)과 대사(D)가 블록마다 어떻게 놓였는지.
     # 정답: DDN ND DD NDDDN DN NN DD NDDDDD NDD NNDD NDDDDD NNDDDD NNDDNN DDD DDDD DD NDDDDDD DD
@@ -348,6 +328,57 @@ def cmd_check(a):
     warns.extend(pl["warnings"])
     total = pl["total_s"]
     ps = pl["stats"]
+
+    # ── 나레이션 문체 — 내 대본 3편(33문장)이 기준이다 ─────────────────────
+    # 임계값·근거는 quality.py 에. 정답 3편은 전부 통과하고 도구가 뽑은 대본은
+    # 5개가 걸리도록 역산했다 (selftest [14] 가 그걸 고정한다).
+    import quality
+    m = quality.narration_metrics([n["text"] for n in nars])
+    if not m["n"]:
+        # 문체 지표를 전부 `if nars:` 안에 두면 **나레이션을 안 쓰는 것으로
+        # 전부 회피**된다. 실측: 나레이션을 지운 대본이 경고 3건으로 통과했다.
+        errors.append("나레이션이 하나도 없습니다 — 대사 나열은 이야기가 아닙니다.")
+    else:
+        interval = pl["total_s"] / m["n"]
+        print("  나레이션 %d개 · 중앙 %d자 (평균 %.0f · 최대 %d) · %.1f초에 하나"
+              % (m["n"], m["median"], m["mean"], m["max"], interval))
+        print("  종결: ~는데 %.0f%% · ~고 %.0f%% · 명사 %.0f%% · ~죠 %d개 · 완결형 %.0f%%"
+              % (100 * m["neunde"], 100 * m["conn"], 100 * m["nounend"],
+                 m["jyo"], 100 * m["final_ratio"]))
+
+        def _bad(msg):
+            errors.append("문체 — " + msg)
+
+        if not (quality.MEDIAN_LO <= m["median"] <= quality.MEDIAN_HI):
+            _bad("나레이션 중앙 길이가 %d자입니다 (기준 %d~%d · 내 대본 13/15/18자)."
+                 % (m["median"], quality.MEDIAN_LO, quality.MEDIAN_HI))
+        if m["long_ratio"] > quality.LONG_RATIO_MAX:
+            _bad("%d자 넘는 나레이션이 %.0f%%입니다 (기준 %.0f%% 이하 · 내 대본 10~25%%)."
+                 % (quality.LONG_CHARS, 100 * m["long_ratio"],
+                    100 * quality.LONG_RATIO_MAX))
+            for t in m["over"][:3]:
+                print("    %2d자  %s" % (len(t), t))
+            if len(m["over"]) > 3:
+                print("    … 외 %d개" % (len(m["over"]) - 3))
+        if m["nounend"] > quality.NOUNEND_MAX:
+            _bad("명사로 끝난 나레이션이 %.0f%%입니다 (기준 %.0f%% 이하 · 내 대본 21%%) — "
+                 "`~는데`·`~고` 로 다음을 여세요."
+                 % (100 * m["nounend"], 100 * quality.NOUNEND_MAX))
+        if not (quality.INTERVAL_LO <= interval <= quality.INTERVAL_HI):
+            _bad("나레이션이 %.1f초마다 하나입니다 (기준 %.0f~%.0f초 · 내 대본 9.3/14.1/15.0)."
+                 % (interval, quality.INTERVAL_LO, quality.INTERVAL_HI))
+        if m["jyo"] < 1:
+            _bad("`~죠` 로 끝나는 나레이션이 없습니다 — 이야기가 뒤집히는 "
+                 "**딱 한 자리**에 하나 넣으세요 (내 대본은 편당 정확히 1개).")
+        if m["final_ratio"] > quality.FINAL_MAX:
+            _bad("완결형(`~다.`)이 %.0f%%입니다 — 내 대본 33문장에 0개입니다."
+                 % (100 * m["final_ratio"]))
+        for n in nars:
+            if not (quality.ITEM_MIN <= len(n["text"]) <= quality.ITEM_MAX):
+                warns.append("나레이션 길이 %d자: %s" % (len(n["text"]), n["text"][:30]))
+        for name, n in _unknown_names(nars, cues):
+            notes.append("'%s' 는 자막에 없는 이름입니다 (%d회 사용)." % (name, n))
+
     print("\n타임라인")
     print("  컷 %d · 자막 %d · 음소거 구간 %d · 이어붙임 %d"
           % (ps["cuts"], ps["subs"], ps["muted"], ps["merged"]))
