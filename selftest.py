@@ -532,9 +532,36 @@ def main():
     for x in pl["subs"]:
         if x["kind"] == "narration":
             _multi.setdefault(x.get("bi"), []).append(x)
-    check("모든 나레이션 조각이 하한을 지킨다",
-          min(_nd) >= layout.NARR_MIN_PIECE_S - 1e-9,
-          "최소 %.3f초 · 하한 %.2f초" % (min(_nd), layout.NARR_MIN_PIECE_S))
+    # 한 문장의 조각은 **같은 단**에 서야 한다. 「단 8개」로는 이걸 못 잡는다 —
+    # `SUB_ROWS_MAX` 클램프 때문에 cont 가 있든 없든 개수가 8이다(뮤테이션으로
+    # 확인: cont 처리를 지워도 아무 검사도 안 걸렸다).
+    _runs, _cur = [], None
+    for x in sorted(pl["subs"], key=lambda y: y["t_start"]):
+        if x["kind"] != "narration":
+            continue
+        if x.get("cont") and _cur is not None:
+            _cur.append(x)
+        else:
+            _cur = [x]
+            _runs.append(_cur)
+    _multi = [r for r in _runs if len(r) > 1]
+    check("쪼갠 문장이 여럿 있다", len(_multi) >= 5, "%d개" % len(_multi))
+    _bad = [r for r in _multi if len({y.get("row", 0) for y in r}) != 1]
+    eq("한 문장의 조각은 같은 단에 선다", len(_bad), 0)
+
+    # 하한 가드는 **직접** 잰다. 레퍼런스 최소 조각이 0.48초라 그 대본으로는
+    # 평균 가드와 실제 가드가 구분되지 않는다(뮤테이션으로 확인).
+    _t0 = 100.0
+    _txt = "그때 미키가 참교육을 아주 제대로 시작했는데"
+    _fake = [{"t_start": _t0, "lines": [_txt], "kind": "narration",
+              "bi": 0, "src_no": None, "speech_s": 0.95},
+             {"t_start": _t0 + 5.0, "lines": ["끝"], "kind": "dialogue",
+              "bi": 0, "src_no": 1}]
+    _got = layout._split_narration(_fake, 1.0 / 24)
+    _pieces = [x for x in _got if x["kind"] == "narration"]
+    check("평균은 통과해도 조각이 하한을 뚫으면 안 자른다",
+          len(_pieces) == 1 and _pieces[0]["lines"] == [_txt],
+          "조각 %d개 %s" % (len(_pieces), [x["lines"][0] for x in _pieces]))
     # 조각내기를 꺼도 **자막 카드 수 말고는 아무것도 안 달라져야** 한다.
     # 이 한 쌍이 "렌더링만 바꿨다"를 실행 가능한 명제로 만들고, 되돌리기
     # 스위치가 실제로 도는지도 영원히 검증한다.
