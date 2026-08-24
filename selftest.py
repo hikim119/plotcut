@@ -263,12 +263,122 @@ def ending_tests():
     eq("빈 지표는 경고도 참고도 없다", q.selection_issues({}), ([], []))
 
 
+_DLG_CODE = re.compile(r"^(\d+)([?!.]?)(,?)$")
+
+
+def _synth(code):
+    """`11?` → 11자짜리 합성 줄. **픽스처에 영화 대사를 안 싣기 위한 장치다.**
+
+    길이·끝부호·쉼표만 남긴 코드라 원문은 복원되지 않는다. 그래도
+    `quality.dialogue_metrics` 가 재는 것은 전부 재현된다 — 그 함수가 보는 게
+    길이·끝부호·쉼표·문자 종류뿐이고 어휘는 애초에 안 재기 때문이다.
+    """
+    m = _DLG_CODE.match(code)
+    n, end, com = int(m.group(1)), m.group(2), m.group(3)
+    body = "가" * max(1, n - len(end))
+    if com:
+        body = body[:-1] + ","          # 쉼표는 끝부호 앞자리에
+    return (body + end)[:n]
+
+
+def dialogue_tests():
+    """대사 번역 계측 — **테스트 자산이 없어도 돈다.**"""
+    import json
+    import quality as q
+    print()
+    print("[17] 대사 번역 계측 (quality.dialogue_*)")
+    gp = ROOT / "fixtures" / "dialogue_gold.json"
+    if not gp.exists():
+        check("대사 픽스처가 있다", False, str(gp))
+        return
+    gold = {k: v for k, v in json.loads(gp.read_text(encoding="utf-8")).items()
+            if not k.startswith("_")}
+
+    # ① 골든 — 정답 3편이 **전부 통과**해야 한다. 하나라도 걸리면 임계가 틀린 것이다.
+    allc = []
+    for name, v in sorted(gold.items()):
+        lines = [_synth(c) for c in v["codes"]]
+        allc += lines
+        m = q.dialogue_metrics(lines)
+        e = v["expect"]
+        for k in ("n", "median", "max"):
+            eq("%s %s" % (name, k), m[k], e[k])
+        near("%s ?!끝 비율" % name, m["mark"], e["mark"], 0.002)
+        near("%s 쉼표 비율" % name, m["comma"], e["comma"], 0.002)
+        er, wr, _ = q.dialogue_issues(m)
+        eq("%s 는 대사 규범을 통과한다" % name, (len(er), len(wr)), (0, 0))
+    m_all = q.dialogue_metrics(allc)
+    eq("합계 248줄", m_all["n"], 248)
+    eq("20자 이상 0줄", sum(1 for t in allc if len(t) >= 20), 0)
+    eq("합계도 통과", tuple(len(x) for x in q.dialogue_issues(m_all)[:2]), (0, 0))
+
+    # ② 네거티브 A — 번역이 안 남은 줄. 정답 0건 · 원본 영어 6,249줄 전수 적중.
+    _en = q.dialogue_metrics(["This is an english line.", "I go."])
+    eq("영어가 남으면 ✘", len(q.dialogue_issues(_en)[0]), 1)
+    eq("두 줄 다 잡힌다", len(_en["foreign"]), 2)
+    # 오탐 — 짧은 약어는 한국어 줄에 그대로 쓴다
+    eq("OK·FBI·TV 는 안 걸린다",
+       q.dialogue_metrics(["OK 알겠어", "FBI가 왔다", "TV 봤어"])["foreign"], [])
+
+    # ③ 네거티브 B — **나레이션 문체를 대사에 쓰면 걸린다.**
+    #    두 규범이 실제로 갈린다는 것을 코드가 증명한다. 「14자 스코프」의 자물쇠다.
+    ng = ROOT / "fixtures" / "narration_gold.json"
+    if ng.exists():
+        _nars = [t for k, v in json.loads(ng.read_text(encoding="utf-8")).items()
+                 if not k.startswith("_") for t in v["narrations"]]
+        _nm = q.dialogue_metrics(_nars)
+        _ne, _nw, _ = q.dialogue_issues(_nm)
+        check("나레이션 33문장은 대사 규범에 걸린다 (중앙 16자 · ?! 0%)",
+              len(_nw) >= 2 and _nm["median"] > q.DLG_MEDIAN_MAX
+              and _nm["mark"] < q.DLG_MARK_MIN,
+              "중앙 %d · ?! %.0f%% · ⚠%d" % (_nm["median"], 100 * _nm["mark"], len(_nw)))
+        eq("그래도 영어는 아니다", len(_ne), 0)
+
+    # ④ 경로 게이트 — 한국어 자막이면 아예 안 켜진다
+    import cli
+    _cc = inspect.getsource(cli.cmd_check)
+    check("대사 판정은 `if not ko:` 안에 있다",
+          "dialogue_metrics" in _cc
+          and _cc.index("if not ko:") < _cc.index("quality.dialogue_metrics"))
+    check("frozen 문단은 authored_lines 가 뺀다",
+          "authored_lines" in _cc and "screen_lines" not in _cc)
+
+    # ⑤ 프롬프트 — 실제 **출력**을 본다. 소스를 보면 주석까지 걸린다.
+    import script_gen as _sg
+    _was = _sg._srt_is_korean
+    try:
+        _sg._srt_is_korean = lambda _p: False        # 외국어 자막인 척
+        _pe = _sg.build_prompt("x.srt", "o.txt", 180)
+    finally:
+        _sg._srt_is_korean = _was
+    for _k in ("중앙 10자", "20자 넘는 줄이 0줄", "셋에 하나가", "통째로 버려라",
+               "14자 상한은 나레이션 규칙", "쉼표 자리면 줄을 끊어라"):
+        check("번역 지침에 '%s'" % _k, _k in _pe)
+    # 예전 예시 3줄은 쉼표 100%·평균 13.7자로 실측(0.4%·10자)의 정반대를 가르쳤다.
+    # 에이전트는 표의 숫자가 아니라 눈앞의 예시를 베낀다 — 되돌아오면 안 된다.
+    check("지어낸 대사 예시가 안 돌아왔다", "대박, 저 귀걸이" not in _pe)
+    _ex = [l for l in _pe.splitlines() if l.strip().startswith("#")]
+    check("`#` 예시 줄에 쉼표가 없다",
+          _ex and not any("," in l for l in _ex), str(_ex))
+
+    # ⑥ 문서 스코프 — style_example 이 나레이션 규칙임을 밝히고 §10 이 있을 것
+    _st = (ROOT / "template" / "style_example.txt").read_text(encoding="utf-8")
+    check("14자 상한에 나레이션 스코프가 붙어 있다",
+          "나레이션" in [l for l in _st.splitlines()
+                        if "14자를 절대 안 넘는다" in l][0])
+    check("§10 대사 절이 있다", "## 10. 대사" in _st)
+    check("§10 은 예시 문장을 안 싣는다고 밝힌다", "예시가 없는 건" in _st)
+    for _k in ("중앙 10자", "19자까지", "248줄에 **1개**"):
+        check("§10 에 '%s'" % _k, _k in _st)
+
+
 def main():
     # 픽스처만 쓰는 회귀는 **test/ 없이도** 돈다 — 두 함수의 독스트링이 그렇게
     # 적혀 있는데도 예전엔 아래 조기 return 뒤에 있어서, 받아 쓴 사람 PC 에서는
     # 문체·결말 임계값이 통째로 안 돌았다. 조용히 죽은 검사가 제일 위험하다.
     style_tests()
     ending_tests()
+    dialogue_tests()
     if not SRT.exists() or not REF.exists():
         print("\n테스트 자료가 없습니다 (%s). 나머지는 건너뜁니다." % TEST)
         print("\n" + "=" * 60)

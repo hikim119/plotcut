@@ -401,6 +401,23 @@ def cmd_check(a):
         for name, n in _unknown_names(nars, cues):
             notes.append("'%s' 는 자막에 없는 이름입니다 (%d회 사용)." % (name, n))
 
+    # ── 대사 번역 문체 — **번역 경로에서만** ─────────────────────────────
+    # 한국어 자막이면 대사가 자막 원문이라(규칙 6) 사람이 못 고친다. 거기서 켜면
+    # 고칠 수 없는 ✘ 만 쌓인다. 재는 대상도 `authored_lines` 로 한 번 더 좁힌다 —
+    # `@시각`만 붙은 frozen 문단은 자막 원문을 그대로 옮긴 것이다.
+    if not ko:
+        _wl = [ln for it in dlg for ln in (script_io.authored_lines(it) or [])]
+        dm = quality.dialogue_metrics(_wl)
+        if dm["n"]:
+            de, dw, dn = quality.dialogue_issues(dm)
+            errors += de
+            warns += dw
+            notes += dn
+            for t in dm["foreign"][:3]:
+                print("    ✘ 한국어 아님  %s" % t[:40])
+            for t in dm["over"][:3]:
+                print("    %2d자  %s" % (len(t), t[:40]))
+
     print("\n타임라인")
     print("  컷 %d · 자막 %d · 음소거 구간 %d · 이어붙임 %d"
           % (ps["cuts"], ps["subs"], ps["muted"], ps["merged"]))
