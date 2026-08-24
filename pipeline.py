@@ -138,32 +138,20 @@ def write_atomic(path, text):
     return path
 
 
-def _canon(obj):
-    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
 def save_state(path, state):
+    """`state.json` 은 **기록이다.** 도구가 다시 읽지 않는다.
+
+    예전엔 `self_sha256` 을 같이 써 두고 `load_state(verify=True)` 로 대조했다.
+    그런데 첫 커밋부터 `load_state` 를 부르는 곳이 없었다 — 쓰기만 하고 아무도
+    안 읽었으니 손상 감지가 발화할 수 없었다.
+
+    이어하기가 없어서 그렇다. `build` 는 기존 프로젝트를 덮지 않고 **항상 새로**
+    만든다. 그러면 앞선 실행의 상태를 믿을 일 자체가 없다. 못 쓰는 자물쇠를 달아
+    두느니 파일이 무엇인지 분명히 하는 편이 낫다 — 사람이 읽는 기록이다.
+    """
     state = dict(state)
-    state.pop("self_sha256", None)
-    state["self_sha256"] = hashlib.sha256(_canon(state).encode("utf-8")).hexdigest()
+    state.pop("self_sha256", None)          # 옛 파일에 남아 있으면 걷어낸다
     write_atomic(path, json.dumps(state, ensure_ascii=False, indent=1))
-    return state
-
-
-def load_state(path, verify=True):
-    p = Path(path)
-    if not p.exists():
-        return None
-    state = json.loads(p.read_text(encoding="utf-8"))
-    if verify and state.get("self_sha256"):
-        want = state["self_sha256"]
-        probe = dict(state)
-        probe.pop("self_sha256")
-        got = hashlib.sha256(_canon(probe).encode("utf-8")).hexdigest()
-        if got != want:
-            raise guards.GuardError(
-                "state.json이 손상됐거나 손으로 고쳐졌습니다 (%s).\n"
-                "  프로젝트를 다시 만드세요." % p)
     return state
 
 
