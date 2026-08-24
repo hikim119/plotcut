@@ -559,6 +559,29 @@ def main():
               "bi": 0, "src_no": 1}]
     _got = layout._split_narration(_fake, 1.0 / 24)
     _pieces = [x for x in _got if x["kind"] == "narration"]
+    # `@시각` 과 텍스트 매칭이 **섞인** 대본에서 크래시하던 것.
+    # 이어붙임이 `src1` 만 늘리고 `cue_to` 를 앞 문단에 남겨서, 되감기 검사가
+    # 「번호는 앞인데 소스는 뒤」로 오판해 LayoutError 로 죽었다.
+    # 사람이 frozen 대본을 손보다 한 문단에 시각을 안 붙이면 이 상태가 된다.
+    _a, _b, _c = cues[2], cues[3], cues[4]
+    _far = _c["start_s"] + 2.0
+    _mix = chr(10).join([
+        "제목", "",
+        "[%s ~ %s]" % (script_io.hms(_a["start_s"]), script_io.hms(_far + 3)), "",
+        _a["text"], "",
+        "%s %s" % (script_io.fmt_span(_b["start_s"], _far), _b["text"]), "",
+        _c["text"], ""])
+    try:
+        _md = script_io.read(_mix, cues, log=lambda *_: None)
+        _mp = layout.build(_md, cues, 7000, log=lambda *_: None)
+        check("@시각·텍스트 섞인 대본이 죽지 않는다", True,
+              "경고 %d건" % len(_mp["warnings"]))
+        check("대신 되감기 경고로 알려 준다",
+              any("되감깁니다" in w for w in _mp["warnings"]), str(_mp["warnings"]))
+    except Exception as _e:                                     # noqa: BLE001
+        check("@시각·텍스트 섞인 대본이 죽지 않는다", False,
+              "%s: %s" % (type(_e).__name__, _e))
+
     check("평균은 통과해도 조각이 하한을 뚫으면 안 자른다",
           len(_pieces) == 1 and _pieces[0]["lines"] == [_txt],
           "조각 %d개 %s" % (len(_pieces), [x["lines"][0] for x in _pieces]))

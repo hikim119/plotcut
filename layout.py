@@ -288,6 +288,14 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
                 if prev["kind"] != p["kind"]:
                     prev["mixed"] = True
                 prev["src1"] = p["src1"]
+                # **번호도 물려받는다.** 시각만 늘리면 `cue_to` 가 앞 문단에 남아,
+                # 이어 붙인 끝이 다음 문단보다 뒤인데 번호는 앞이라 위 되감기
+                # 검사가 "기하학적으로 불가능" 으로 오판해 **크래시**한다.
+                # 재현: 텍스트 매칭 대사(#3) → `@시각` 문단(번호 없음, span 끝이
+                # #5 시작보다 뒤) → 텍스트 매칭 대사(#5) 로 `LayoutError` 가 났다.
+                # `@시각` 과 텍스트 매칭이 섞인 대본(사람이 frozen 대본을 손보다
+                # 한 문단에 시각을 안 붙인 경우)에서 실제로 생긴다.
+                prev["cue_to"] = p.get("cue_to")
                 p["merged_into"] = prev
                 continue
         segs.append(p)
