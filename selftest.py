@@ -10,6 +10,7 @@ selftest.py — 정답 샘플로 고정한 회귀 테스트.
 import inspect
 import json
 import math
+import statistics
 import pathlib
 import re
 import sys
@@ -155,6 +156,37 @@ def style_tests():
     check("중경삼림 예시는 문체 기준에 걸린다 (의도)", len(_hit) >= 2, str(_hit))
     check("걸리는 이유는 길이다", "중앙" in _hit and "21자초과" in _hit, str(_hit))
     # 그런데 종결·~죠 는 정답과 같다 — 문예물이어도 문장을 안 닫는 건 같다
+    # ④ 나레이션 조각내기 — 화면에 어떻게 나뉘는지. 정답 33문장 전수 실측.
+    import collections
+    import wrap
+    _P = [wrap.split_narration(t) for name, v in sorted(gold.items())
+          for t in v["narrations"]]
+    _cnt = collections.Counter(len(x) for x in _P)
+    _pl = [len(y) for x in _P for y in x]
+    eq("1조각 문장 11개", _cnt[1], 11)          # 33문장 중 13자 이하가 정확히 11개
+    eq("4조각 문장 1개", _cnt[4], 1)
+    _avg = sum(len(x) for x in _P) / len(_P)     # 실측 1.70
+    check("문장당 조각 1.6~1.9", 1.6 <= _avg <= 1.9, "%.2f" % _avg)
+    eq("15자 이상 조각 0", sum(1 for x in _pl if x > wrap.NARR_LINE), 0)
+    eq("5자 미만 조각 0", sum(1 for x in _pl if x < 5), 0)
+    check("첫 조각 최빈 8자",
+          collections.Counter(len(x[0]) for x in _P).most_common(1)[0][0] == 8, "")
+    check("나머지 조각 중앙 8자",
+          statistics.median([len(y) for x in _P for y in x[1:]]) == 8, "")
+    # 유저분이 짚어 준 4문장 — **글자까지** 같아야 한다. 가장 강한 자물쇠다.
+    for _t, _want in (
+            ("갑작스런 비보를 받게 된 할", ["갑작스런 비보를", "받게 된 할"]),
+            ("하지만 맛탱이가 완전히 가버렸고", ["하지만 맛탱이가", "완전히 가버렸고"]),
+            ("말콤은 한 소리 하려했는데", ["말콤은 한 소리", "하려했는데"]),
+            ("보다못한 말콤은 궁극기를 시전하기로 했고",
+             ["보다못한 말콤은", "궁극기를 시전하기로 했고"])):
+        eq("실측 그대로: %s" % _t[:12], wrap.split_narration(_t), _want)
+    # 네거티브 — 안 자르는 구현으로도 통과하면 안 된다
+    check("통째로는 14자를 넘는 문장이 스물 이상",
+          sum(1 for name, v in gold.items() for t in v["narrations"]
+              if len(t) > wrap.NARR_LINE) >= 20, "")
+    eq("조각내기는 기본으로 켜져 있다", wrap.NARR_SPLIT, True)
+
     _rm = q.narration_metrics(_ref)
     eq("중경삼림도 완결형 0", _rm["final_ratio"], 0.0)
     eq("중경삼림도 ~죠 1개", _rm["jyo"], 1)
@@ -342,7 +374,33 @@ def main():
     st = pl["stats"]
     near("총 길이 168.5초", pl["total_s"], 168.5, 0.05)
     eq("영상 구간 48개", st["cuts"], 48)
-    eq("자막 81개 (대사 61 + 나레이션 19 + 제목 1)", st["subs"], 81)
+    eq("자막 107개 (대사 61 + 나레이션 45조각 + 제목 1)", st["subs"], 107)
+    # 나레이션은 문장을 통째로 내지 않고 **조각으로 잘라 차례로** 띄운다.
+    # 예전엔 화면 한 줄이 중앙 21자 · 최대 44자였고 열에 일곱이 14자를 넘었다.
+    import wrap
+    _nl = [len(l) for x in pl["subs"] if x["kind"] == "narration" for l in x["lines"]]
+    eq("나레이션 조각 45개", len(_nl), 45)
+    eq("14자 넘는 나레이션 줄 0", sum(1 for x in _nl if x > wrap.NARR_LINE), 0)
+    check("나레이션 줄 중앙 8자", statistics.median(_nl) == 8, str(sorted(_nl)[:8]))
+    # 조각이 1프레임 미만이면 `_stack` 이 조용히 버린다 — 실측 최소 0.48초
+    _nd = [x["t_dur"] for x in pl["subs"] if x["kind"] == "narration"]
+    check("조각이 1프레임보다 짧지 않다", min(_nd) >= 1.0 / 24, "%.3f초" % min(_nd))
+    # 조각내기를 꺼도 **자막 카드 수 말고는 아무것도 안 달라져야** 한다.
+    # 이 한 쌍이 "렌더링만 바꿨다"를 실행 가능한 명제로 만들고, 되돌리기
+    # 스위치가 실제로 도는지도 영원히 검증한다.
+    _saved = wrap.NARR_SPLIT
+    try:
+        wrap.NARR_SPLIT = False
+        _off = layout.build(doc, cues, 6159.104, fps=24.0,
+                            mute_under_narration=True)
+        eq("끄면 자막 81개 — 조각내기 이전과 같다", _off["stats"]["subs"], 81)
+        eq("끄나 켜나 컷이 한 글자도 안 달라진다",
+           [(round(x["src0"], 4), round(x["t_dur"], 4)) for x in pl["segments"]],
+           [(round(x["src0"], 4), round(x["t_dur"], 4)) for x in _off["segments"]])
+        eq("헤더도 불변", pl["headers"], _off["headers"])
+        near("총 길이도 불변", _off["total_s"], pl["total_s"], 0.001)
+    finally:
+        wrap.NARR_SPLIT = _saved
     # 예전엔 **한 덩어리의 여러 줄이 같은 t_start** 를 받아서, `_stack` 이 길이를
     # 「다음 자막 시작까지」로 재는 순간 앞줄이 0초가 되어 버려졌다. 실측으로
     # 2줄짜리 자막 10개의 첫 줄이 10개 전부 사라졌다 — `내일 저녁 8시` 가 날아가

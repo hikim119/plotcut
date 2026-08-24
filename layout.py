@@ -28,6 +28,10 @@ TITLE_S = 3.0          # 제목 자막 노출 시간
 # 한 블록의 자막은 **위로 쌓인다** — 새 줄이 늘 맨 아래 같은 자리에 오고
 # 앞 줄이 한 칸씩 위로 밀린다. 블록이 바뀌면 다시 1번줄부터.
 SUB_ROWS_MAX = 8       # 이보다 많이 쌓이면 오래된 줄부터 화면 밖으로 뺀다
+# 나레이션 조각이 이보다 짧아지면 안 자르고 문장을 통째로 낸다. 실측 최소
+# 조각이 0.48초(중경삼림 레퍼런스 전수)라 이 분기는 안 탄다 — 안전망이다.
+# 실측 중앙 0.7초를 임계로 쓰면 정답의 절반이 걸린다. 목표값이 아니라 하한이다.
+NARR_MIN_PIECE_S = 0.30
 
 REWIND_BUG = 5.0       # 이보다 작은 음수 간격은 버그, 큰 것은 블록 간 점프
 
@@ -347,8 +351,12 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
         else:
             subs.append({"t_start": t_at(p, u["src0"]),
                          "lines": [it["text"]], "kind": "narration",
-                         "bi": u["bi"], "src_no": None})
+                         "bi": u["bi"], "src_no": None,
+                         "speech_s": max(0.0, u["src1"] - u["src0"])})
     subs.sort(key=lambda s: s["t_start"])
+    # 정렬 **뒤에** 조각낸다 — 「다음 자막까지」를 알아야 구간을 클램프할 수 있고,
+    # 조각은 원래 자리 안에서만 나뉘므로 정렬이 안 깨진다.
+    subs = _split_narration(subs, min_seg)
     subs = _stack(subs, total, min_seg)
 
     if doc.get("title"):
@@ -434,6 +442,50 @@ def _hms(sec):
     return "%d:%02d:%02d" % (sec // 3600, (sec % 3600) // 60, sec % 60)
 
 
+def _split_narration(subs, min_seg, min_piece_s=NARR_MIN_PIECE_S):
+    """나레이션 자막을 **조각으로 나눠 차례로** 띄운다.
+
+    유저 완성본 3편은 나레이션 한 문장을 1.5~2조각으로 잘라 순차로 보여 준다
+    (화면 한 줄 중앙 8자 · 최대 14자 · 15자 초과 0줄, 58줄 전수). 도구는 문장을
+    통째로 한 줄에 밀어 넣어 **중앙 21자 · 최대 44자**가 나갔다 — 열에 일곱이
+    기준 초과였다.
+
+    시각은 조각의 **발화 가중치 비례**로 나눈다(`spread_lines` 와 같은 이유).
+    「초당 10.4자」에 새 상수를 두지 않는다 — `narration_seconds` 가 이미
+    raw_weight × 120ms 라서 10.2자/초이고, 상수를 또 두면 `timing.MS_PER_UNIT`
+    캘리브레이션이 한쪽에만 먹는다.
+
+    조각 하나가 `min_piece_s` 보다 짧아지면 **조각 수를 줄이지 말고 문장을 통째로**
+    낸다. 줄이면 「반만 뜨는」 상태가 생기고 어디를 합칠지가 또 하나의 조율 대상이
+    된다. 전부 아니면 전무면 최악이 「오늘과 똑같음」이라 안전하다. 실측 최소
+    조각이 0.48초라 이 분기는 사실상 안 탄다 — 순수 안전망이다.
+    """
+    import wrap
+    out = []
+    for i, s in enumerate(subs):
+        if s["kind"] != "narration":
+            out.append(s)
+            continue
+        parts = wrap.split_narration(s["lines"][0])
+        span = s.get("speech_s") or 0.0
+        nxt = next((x["t_start"] for x in subs[i + 1:]), None)
+        if nxt is not None:
+            # 되감기 경고 상황에서도 조각이 다음 자막을 넘지 않게 — 넘으면
+            # 정렬이 깨지고 「동시에 뜨는 자막은 하나뿐」이 무너진다.
+            span = min(span, max(0.0, nxt - s["t_start"]))
+        if len(parts) < 2 or span / len(parts) < min_piece_s:
+            out.append(s)
+            continue
+        for k, (t, ln) in enumerate(spread_lines(s["t_start"],
+                                                 s["t_start"] + span, parts)):
+            piece = dict(s, t_start=t, lines=[ln])
+            piece.pop("speech_s", None)     # 조각에는 뜻이 없다 — 헷갈리지 않게
+            if k:
+                piece["cont"] = True        # 첫 조각과 같은 단에 선다
+            out.append(piece)
+    return out
+
+
 def _stack(subs, total, min_seg):
     """자막마다 **자기 구간에 딱 한 번**. 블록 안 순서대로 줄 자리를 옮겨 간다.
 
@@ -456,12 +508,19 @@ def _stack(subs, total, min_seg):
             # 1프레임을 못 채우면 화면에 보이지도 않고 CapCut 이 받지도 않는다
             continue
         # 블록 안에서 몇 번째인가 = 줄 자리
+        # 같은 문장의 뒷조각은 **새 단이 아니다.** 한 문장이 한 단이라야 CapCut 에서
+        # "몇 번째 단"을 통째로 골라 스타일을 바꿀 수 있다. 안 묶으면 8단 꼭대기에
+        # 4개 → 13개가 몰리고 한 문장의 조각이 세 트랙에 흩어진다.
         row = 0
         for k in range(i - 1, -1, -1):
             if subs[k]["bi"] != s["bi"]:
                 break
-            row += 1
-        out.append(dict(s, t_start=t0, t_dur=dur, row=min(row, SUB_ROWS_MAX - 1)))
+            if not subs[k].get("cont"):
+                row += 1
+        if s.get("cont"):
+            row -= 1                       # 내 첫 조각과 같은 단에 선다
+        out.append(dict(s, t_start=t0, t_dur=dur,
+                        row=min(max(0, row), SUB_ROWS_MAX - 1)))
     return out
 
 

@@ -571,13 +571,24 @@ def write(doc):
     return "\n\n".join(parts) + "\n"
 
 
-def narration_text(doc, limit=12):
-    """타입캐스트 붙여넣기용. 제목은 넣지 않는다(화면 표시용이지 더빙 대상이 아니다)."""
+def narration_text(doc, limit=None):
+    """타입캐스트 붙여넣기용. 제목은 넣지 않는다(화면 표시용이지 더빙 대상이 아니다).
+
+    **화면과 같은 조각**으로 끊는다 — 붙여넣은 줄과 화면에 뜨는 줄이 1:1 이라야
+    사람이 눈으로 대조할 수 있다. 예전엔 여기만 12자로 접었는데 그 12는 측정된
+    값이 아니었고(LineWrapper 에서 물려받음) 화면은 아예 안 접혔다.
+
+    `limit` 을 주면 옛 방식(고정 폭 줄바꿈)으로 돌아간다. 호출부는 없고 탈출구다.
+    """
     import wrap
     out = []
     for blk in doc["blocks"]:
         for it in blk["items"]:
-            if it["kind"] == "narration":
+            if it["kind"] != "narration":
+                continue
+            if limit is None:
+                out.append(chr(10).join(wrap.split_narration(it["text"])))
+            else:
                 out.append(wrap.wrap_beat(it["text"], limit=limit))
     return "\n\n".join(out) + "\n"
 

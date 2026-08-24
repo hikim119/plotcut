@@ -1,5 +1,5 @@
 """
-wrap.py — 나레이션 문장을 12자 이내로 줄바꿈 (LineWrapper 로직 이식)
+wrap.py — 나레이션 문장을 화면에 낼 **조각**으로 나눈다 (LineWrapper 로직 이식)
 
 LineWrapper와 다른 점 두 가지 — 둘 다 의도한 것이다.
 
@@ -12,7 +12,31 @@ LineWrapper와 다른 점 두 가지 — 둘 다 의도한 것이다.
    붙을 수 있다. 빈 줄이 남으면 자막 세그먼트가 비고, 줄 수 기반 매핑이 밀린다.
 """
 
-LIMIT = 12   # 한 줄 최대 글자 수
+# ── 나레이션 조각 ───────────────────────────────────────────────────────────
+# 완성 숏츠 3편의 나레이션 33문장이 화면에서 어떻게 나뉘는지 전수 실측:
+#
+#     조각 수    1조각 11문장 · 2조각 17 · 3조각 3 · 4조각 1  (문장당 1.7)
+#     첫 조각    중앙 9자 · 범위 6~14 · **최빈 8자**
+#     나머지     중앙 8자 · 범위 5~13
+#     화면 한 줄 중앙 8자 · 최대 14자 · **15자 초과 0줄** (58줄 전수)
+#     5자 미만   **0개**
+#
+# 아래 세 값이 그 분포를 재현한다 (캘리브레이션 표로 확인):
+#   조각 {1:11, 2:18, 3:3, 4:1} · 첫 최빈 8 · 나머지 중앙 8 · 15자↑ 0 · 5자↓ 0
+# 그리고 유저 실측 4예를 **글자까지 그대로** 낸다:
+#   `갑작스런 비보를 받게 된 할` → 갑작스런 비보를(8) │ 받게 된 할(6)
+#   `보다못한 말콤은 궁극기를 시전하기로 했고` → 보다못한 말콤은(8) │ 궁극기를 시전하기로 했고(13)
+#
+# 값을 만지지 마라 — 셋이 얽혀 있다. WHOLE 을 14로 올리면 1조각이 11 → 13이 되고,
+# HEAD 를 8로 낮추면 4조각 문장이 사라진다. 고칠 일이 생기면 표를 다시 찍어라.
+NARR_WHOLE = 13   # 이보다 짧으면 안 자른다 (33문장 중 13자 이하가 정확히 11문장)
+NARR_HEAD = 9     # 앞에서부터 이만큼씩 묶는다
+NARR_LINE = 14    # 조각 한 줄 상한. 꼬리를 다시 묶을 때의 한도
+NARR_SPLIT = True  # False 면 문장을 통째로 낸다 — 조각내기 이전 그림으로 되돌리기
+
+# 예전 이름. **12는 측정된 값이 아니라** LineWrapper 에서 그대로 물려받은 것이고
+# 근거가 코드에도 문서에도 없었다. 실측은 14다(나레이션 큐 58개 전수).
+LIMIT = NARR_LINE
 
 
 def _length(s, count_spaces):
@@ -103,6 +127,43 @@ def wrap_lines(narration, limit=LIMIT, lang=None):
     else:
         lines = wrap_clause(narration, limit, count_spaces=True)
     return [ln for ln in (s.strip() for s in lines) if ln]
+
+
+def split_narration(text, whole=NARR_WHOLE, head=NARR_HEAD, line=NARR_LINE,
+                    lang=None):
+    """나레이션 문장 하나 → 화면에 **차례로** 띄울 조각들. 항상 1개 이상.
+
+    `wrap_beat` 을 못 쓰는 이유: 그건 줄바꿈을 넣은 **문자열 하나**를 돌려준다.
+    조각은 각자 자기 시각을 가져야 하므로 **리스트**여야 한다.
+
+    앞에서부터 `head` 자씩 묶은 뒤, 조각이 셋 이상이면 **꼬리만 다시 묶어**
+    조각 수를 줄인다. 그냥 greedy 로 두면 앞을 꽉 채우고 꼬리가 2자로 남는데,
+    유저 실측 47조각에는 **5자 미만이 하나도 없다.**
+    """
+    text = (text or "").strip()
+    if not NARR_SPLIT or not text or len(text) <= whole:
+        return [text] if text else []
+    parts = wrap_lines(text, limit=head, lang=lang)
+    if len(parts) >= 3:
+        glue = "" if (lang or detect_lang(text)) == "ja" else " "
+        out = [parts[0]]
+        for pp in parts[1:]:
+            cand = out[-1] + glue + pp
+            if len(out) > 1 and len(cand) <= line:
+                out[-1] = cand
+            else:
+                out.append(pp)
+        parts = out
+    # 발음할 글자가 없는 조각(문장부호만)은 앞에 붙인다 — 홀로 두면 발화
+    # 가중치가 0이라 시각이 앞 조각과 겹치고 `layout._stack` 이 통째로 버린다.
+    import timing
+    merged = []
+    for pp in parts:
+        if merged and timing.is_silent(pp):
+            merged[-1] = merged[-1] + pp
+        else:
+            merged.append(pp)
+    return [x for x in (y.strip() for y in merged) if x] or [text]
 
 
 def wrap_beat(narration, limit=LIMIT, lang=None):
