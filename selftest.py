@@ -418,20 +418,23 @@ def dialogue_tests():
 
 
 def tail_tests():
-    """마지막 문단 — 짧은 대사 한 방. **자산 없이 돈다.**
+    """마지막 문단 — **나레이션으로 끝내지 않는다.** 자산 없이 돈다.
 
-    채택 근거: 정답 3편 2/3/4자 · 임계 14 · 도구 대본 22개 19~44자. 겹침 0.
+    길이 검사는 붙였다가 뺐다. 파싱된 텍스트로 재면 안 갈린다 —
+    유저 완성본 2/3/4자 · 유저 레퍼런스 19자 · 도구 3/3자.
+    예전 근거 「도구 19~44자」는 `@시각` 접두어 25자가 섞인 값이었다.
+    정답이 떨어지고 도구가 통과하는 검사는 게이트가 아니라 함정이다.
     """
     import cli
     import quality as q
     print()
-    print("[18] 마지막 문단 (quality.TAIL_CHARS)")
+    print("[18] 마지막 문단")
     _cc = inspect.getsource(cli.cmd_check)
-    check("마지막 문단을 실제로 잰다", "TAIL_CHARS" in _cc, "cli.cmd_check")
     check("나레이션으로 끝나면 잡는다", "대본이 나레이션으로 끝납니다" in _cc)
-    # 임계는 정답 최대(4자)와 도구 최소(19자) 사이에 있어야 한다 — 이 저장소 규율.
-    check("임계가 정답과 도구 사이에 있다",
-          4 < q.TAIL_CHARS < 19, "TAIL_CHARS=%s" % q.TAIL_CHARS)
+    check("길이로는 안 잰다 — 정답을 떨어뜨렸다",
+          "TAIL_CHARS" not in _cc and not hasattr(q, "TAIL_CHARS"), "cli/quality")
+    # 왜 뺐는지가 코드에 남아 있어야 다음 사람이 같은 걸 또 붙이지 않는다.
+    check("뺀 이유가 코드에 적혀 있다", "@시각` 접두어" in _cc or "접두어 25자" in _cc)
 
 
 def width_tests():
