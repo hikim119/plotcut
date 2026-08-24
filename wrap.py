@@ -178,6 +178,15 @@ def split_narration(text, whole=NARR_WHOLE, head=NARR_HEAD, line=NARR_LINE,
         if pend:
             pp = "".join(pend) + pp
             pend = []
+            if len(pp) > line:
+                # 앞에 붙이니 상한을 넘었다 — **뒷말을 다시 쪼갠다.** 예전엔 이
+                # 갈래에만 길이 검사가 없어 `?!?!?!?!?! 일진들이 냅다 도망쳤고` 가
+                # 조각 1개(22자)로 뭉쳤고, 그러면 `layout._split_narration` 의
+                # `len(parts) < 2` 가드에 걸려 **문장이 통째로** 화면에 나갔다.
+                # 부호는 첫 낱말에만 남는다. 그 첫 조각이 그래도 넘으면 낱말 자체가
+                # 긴 것이라 더 못 줄인다 — 부호 열 개짜리는 병리적 입력이다.
+                merged.extend(wrap_lines(pp, limit=line, lang=lang))
+                continue
         merged.append(pp)
     for pp in pend:                # 끝까지 못 붙인 것 — 짧은 쪽에 얹는다
         if merged:

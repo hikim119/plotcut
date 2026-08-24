@@ -458,6 +458,19 @@ def _match_all(blocks, cues, warnings, log):
                 #   마야?          ← 이건 사실 764 다
                 # 이러면 764 시각이 통째로 버려지고(그 장면이 안 나온다) 두 줄이
                 # 763 구간에 한꺼번에 뜬다. 실측: 컷 4.17초 → 2.24초, 경고 0건.
+                # 폭 상한. 서명 병합 경로(:362)는 `MAX_MERGE` 로 묶여 있는데
+                # **번호 경로만 무방비**였다. `#1-10` 을 쓰면 원본 큐 10개 자리에
+                # 사람이 쓴 한 줄만 뜨고 나머지 9줄이 화면에서 조용히 사라진다
+                # (재현: 2초 간격 10큐 → 자막 이벤트 1개가 19.5초 내내 고정).
+                # `MAX_ITEM_S` 는 덮는 시간이 20초를 넘을 때만 걸려서, 자막이
+                # 촘촘한 영화에선 10큐를 합쳐도 안 걸린다.
+                if b - a + 1 > MAX_MERGE:
+                    stats["too_wide"] = stats.get("too_wide", 0) + 1
+                    warnings.append(
+                        "블록%d SRT#%d-%d 는 연속 큐 %d개입니다 (상한 %d개) — "
+                        "자막 %d줄이 한 줄로 뭉개집니다. 문단을 나누세요: %r"
+                        % (bi + 1, a, b, b - a + 1, MAX_MERGE,
+                           len(run), it["text"][:30]))
                 want = sum(len(c["lines"]) for c in run)
                 if len(it["lines"]) > want:
                     stats["overstuffed"] += 1

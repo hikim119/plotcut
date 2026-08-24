@@ -252,7 +252,7 @@ python cli.py script <자막.srt> --seconds 180 --title "중경삼림"   :: 대�
 python cli.py check  <대본.txt> --srt <자막.srt>      :: 대본을 자막과 대조
 python cli.py build  <대본.txt> --srt <자막.srt> --movie <영화.mp4> --name 이름
 python cli.py list                                   :: results/ 프로젝트 목록
-python selftest.py                                   :: 회귀 테스트 209건
+python selftest.py                                   :: 회귀 테스트 423건
 ```
 
 | 파일 | 역할 |

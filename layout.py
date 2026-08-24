@@ -182,13 +182,21 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
     by_idx = {c["idx"]: c for c in cues}
     min_seg = 1.0 / max(1.0, fps)
 
-    nar_i = [0]
+    # 문서 순서로 번호를 미리 매긴다. 호출 순서를 세면 **거꾸로 배분된다** —
+    # `_place_block` 은 첫 앵커 앞의 아이템을 `range(first-1, -1, -1)` 로
+    # **역방향 백필**하므로 문서 첫 나레이션이 마지막 길이를 받는다.
+    # 실측: durs=[10,20,30] → N0=30.0 · N1=20.0 · N2=10.0.
+    # (지금은 넘기는 호출부가 없어 휴면이지만, TTS 정렬을 붙이는 순간 터진다.)
+    nar_no = {}
+    for _blk in doc["blocks"]:
+        for _it in _blk["items"]:
+            if _it["kind"] == "narration":
+                nar_no[id(_it)] = len(nar_no)
 
     def dur_of(it):
         if it["kind"] == "narration" and narration_durs is not None:
-            k = nar_i[0]
-            nar_i[0] += 1
-            if k < len(narration_durs):
+            k = nar_no.get(id(it))
+            if k is not None and k < len(narration_durs):
                 return max(min_seg, float(narration_durs[k]))
         return max(min_seg, narration_seconds(it["text"], ms_per_unit))
 

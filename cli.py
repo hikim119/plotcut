@@ -19,15 +19,19 @@ import re
 import sys
 from pathlib import Path
 
+# 가벼운 모듈(정규식만 쓴다)이라 위에서 부른다 — 임계값을 한 곳에 두려면
+# 모듈 수준에서 참조해야 한다.
+import quality
+
 # ── check 임계값 (정답 샘플 실측에서 3배 여유로 역산) ──────────────────────
 MAX_ITEM_S = 20.0      # 한 대사 아이템이 덮는 시간   (정답 최대 6.04초)
 MAX_CUE_GAP_S = 3.0    # 2큐 아이템 안쪽 간격         (정답 최대 0.88초)
 MAX_BROLL_S = 300.0    # b-roll 블록 폭               (정답 249.2초)
-# 나레이션 길이는 **내 대본 실측**(gentleman·robber 21덩어리, 공백 포함)이 기준이다.
-# 8~31자 · 평균 18.3. 중경삼림 참고본은 문예물이라 6~44자 · 평균 21.5로 더 길다.
-NARR_MIN, NARR_MAX = 5, 40
-NARR_AVG_LO, NARR_AVG_HI = 12, 26
-SHORT_RATIO_MAX = 0.40
+# 나레이션 길이 임계는 **여기 없다** — `quality.ITEM_MIN/ITEM_MAX`(5~34) 와
+# `MEDIAN_LO/HI`(11~20) 가 살아 있는 값이다. 여기 있던 `NARR_MIN/NARR_MAX`(5~40)
+# 와 `NARR_AVG_LO/HI`(12~26) 는 **아무도 안 읽는데 살아 있는 값과 달라서**,
+# 고치면 뭔가 바뀔 것처럼 보이는 함정이었다. `SHORT_RATIO_MAX=0.40` 은 정답
+# 본인을 걸어서 폐기된 값이다 (selftest [14] 가 그 사실을 회귀로 못 박는다).
 # 대사 몇 줄마다 나레이션 하나 — 이 비율이 문장력보다 자연스러움을 좌우한다.
 # 내 대본 실측 5.3 / 7.7. 아래로 내려가면 '요약 + 인용문'이 된다.
 DLG_PER_NARR_MIN = 4.0
@@ -37,7 +41,7 @@ LEN_TOL = 0.15
 # 아래 둘은 잘 나온 대본의 실측값이다. 이게 무너지면 '이야기'가 아니라
 # '요약 + 인용문'으로 읽힌다.
 BARE_BLOCK_MIN = 0.25  # 나레이션이 아예 없는 블록 비율 (정답 6/18 = 33%)
-NARR_RUN_MAX = 2       # 나레이션 연속 줄 수            (정답 최대 2)
+NARR_RUN_MAX = quality.RUN_MAX  # 나레이션 연속 줄 수 — 값은 quality.py 에 하나만
 
 
 def _utf8():
@@ -73,7 +77,7 @@ def main(argv=None):
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
 
-    p = sub.add_parser("build", help="CapCut 프로젝트 생성/갱신")
+    p = sub.add_parser("build", help="CapCut 프로젝트 만들기 (매번 새로 만든다)")
     p.add_argument("script", nargs="?", default=None,
                    help="없으면 자막으로 대본을 먼저 만든다")
     p.add_argument("--srt", default=None,
@@ -415,6 +419,27 @@ def cmd_check(a):
                 warns.append("나레이션 길이 %d자: %s" % (len(n["text"]), n["text"][:30]))
         for name, n in _unknown_names(nars, cues):
             notes.append("'%s' 는 자막에 없는 이름입니다 (%d회 사용)." % (name, n))
+
+    # ── 마지막 문단 — 짧은 대사 한 방으로 끝난다 ─────────────────────────
+    # 이 저장소 게이트 채택 3조건을 통째로 만족하는데 배선이 안 돼 있던 값이다.
+    #   정답 3편 마지막 문단  2 · 3 · 4자      (전부 대사)
+    #   임계 quality.TAIL_CHARS = 14
+    #   도구 대본 22개        19 ~ 44자        (22/22 적중, 나레이션 종료 0건)
+    # 겹침 0. 프롬프트(script_gen.py:264)와 AGENTS.md 가 이미 같은 말을 하는데
+    # 22개가 전부 어겼다 — 지시가 있는데 안 지켜지면 검사로 되먹여야 한다.
+    _blocks = [b for b in doc["blocks"] if b["items"]]
+    if _blocks:
+        _last = _blocks[-1]["items"][-1]
+        if _last["kind"] == "narration":
+            errors.append(
+                "대본이 나레이션으로 끝납니다 — 정답 3편은 전부 짧은 대사로 "
+                "끝냅니다. 나레이션은 이음매지 마침표가 아닙니다: %r"
+                % _last["text"][:30])
+        elif len(_last["text"]) > quality.TAIL_CHARS:
+            errors.append(
+                "마지막 문단이 %d자입니다 (기준 %d자 이하 · 내 대본 2/3/4자) — "
+                "여운은 짧은 대사 한 방에서 옵니다: %r"
+                % (len(_last["text"]), quality.TAIL_CHARS, _last["text"][:30]))
 
     # ── 대사 번역 문체 — **번역 경로에서만** ─────────────────────────────
     # 한국어 자막이면 대사가 자막 원문이라(규칙 6) 사람이 못 고친다. 거기서 켜면

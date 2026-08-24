@@ -197,6 +197,16 @@ def style_tests():
         _ps = wrap.split_narration(_t)
         check("무성 조각이 홀로 안 남는다: %s" % _t[:14],
               not any(_tm.is_silent(x) for x in _ps), str(_ps))
+        # 위 한 줄만 있을 땐 **가짜 검사**였다. 이 네 문장이 전부 21·22·15·16자
+        # 조각을 내고 있었는데 아무도 안 봤다. 그중 `?!?!…` 로 시작하는 건 조각이
+        # 1개로 뭉쳐 `layout._split_narration` 의 `len(parts) < 2` 가드에 걸려
+        # **문장이 통째로** 화면에 나갔다. 둘 다 못 박는다.
+        check("문장이 통째로 안 나간다: %s" % _t[:14], len(_ps) >= 2, str(_ps))
+        # 부호는 쪼갤 수 없으니 길이에서 빼고 잰다. 꼬리 부호(`…나타났는데....`)는
+        # 옮길 이웃이 없어 15자가 되는데, 그건 자막을 버리는 것보다 낫다는 판단이다.
+        _txt = [re.sub(r"[^\w가-힣 ]", "", x).strip() for x in _ps]
+        check("부호를 빼면 상한 안: %s" % _t[:14],
+              all(len(x) <= wrap.NARR_LINE for x in _txt), str(_txt))
 
     _rm = q.narration_metrics(_ref)
     eq("중경삼림도 완결형 0", _rm["final_ratio"], 0.0)
@@ -401,6 +411,72 @@ def dialogue_tests():
     check("§10 은 예시 문장을 안 싣는다고 밝힌다", "예시가 없는 건" in _st)
     for _k in ("중앙 10자", "19자까지", "248줄에 **1개**"):
         check("§10 에 '%s'" % _k, _k in _st)
+
+    tail_tests()
+    width_tests()
+    nardur_tests()
+
+
+def tail_tests():
+    """마지막 문단 — 짧은 대사 한 방. **자산 없이 돈다.**
+
+    채택 근거: 정답 3편 2/3/4자 · 임계 14 · 도구 대본 22개 19~44자. 겹침 0.
+    """
+    import cli
+    import quality as q
+    print()
+    print("[18] 마지막 문단 (quality.TAIL_CHARS)")
+    _cc = inspect.getsource(cli.cmd_check)
+    check("마지막 문단을 실제로 잰다", "TAIL_CHARS" in _cc, "cli.cmd_check")
+    check("나레이션으로 끝나면 잡는다", "대본이 나레이션으로 끝납니다" in _cc)
+    # 임계는 정답 최대(4자)와 도구 최소(19자) 사이에 있어야 한다 — 이 저장소 규율.
+    check("임계가 정답과 도구 사이에 있다",
+          4 < q.TAIL_CHARS < 19, "TAIL_CHARS=%s" % q.TAIL_CHARS)
+
+
+def width_tests():
+    """`#a-b` 폭 상한 — 번호 경로가 `MAX_MERGE` 를 지키는가. **자산 없이 돈다.**"""
+    import script_io as sio
+    print()
+    print("[19] `#a-b` 폭 상한")
+    cues = [{"idx": i, "src_no": i, "start_s": 10.0 + i * 2, "end_s": 11.5 + i * 2,
+             "text": "line %d" % i, "lines": ["line %d" % i]} for i in range(1, 11)]
+    def _read(tag):
+        txt = "제목\n\n[00:00:10 ~ 00:00:32]\n\n%s 한국어로 바꾼 대사\n" % tag
+        return sio.read(txt, cues, log=lambda *_: None)
+    d2 = _read("#1-2")
+    check("상한 안(2큐)은 조용하다",
+          not any("상한" in w for w in d2["warnings"]), str(d2["warnings"]))
+    # 예전엔 여기서 경고가 0건이었다. `#1-10` 이면 자막 10줄이 한 줄로 뭉개지는데
+    # `MAX_ITEM_S` 는 덮는 시간이 20초를 넘을 때만 걸려 촘촘한 자막에선 안 걸린다.
+    d10 = _read("#1-10")
+    check("상한 넘으면 경고한다(10큐)",
+          any("상한 %d개" % sio.MAX_MERGE in w for w in d10["warnings"]),
+          str(d10["warnings"]))
+    d3 = _read("#1-3")
+    check("경계 바로 위(3큐)도 잡는다",
+          any("상한" in w for w in d3["warnings"]), str(d3["warnings"]))
+
+
+def nardur_tests():
+    """TTS 길이가 **문서 순서대로** 배분되는가. **자산 없이 돈다.**"""
+    import layout as lay
+    print()
+    print("[20] narration_durs 배분 순서")
+    def _n(t):
+        return {"kind": "narration", "text": t, "lines": [t], "cues": []}
+    items = [_n("첫 번째"), _n("두 번째"), _n("세 번째"),
+             {"kind": "dialogue", "text": "고정", "lines": ["고정"],
+              "cues": [], "span": (100.0, 104.0)}]
+    doc = {"title": "t", "blocks": [{"header": None, "win": None, "note": "",
+                                     "items": items}]}
+    out = lay.build(doc, [], 10000.0, fps=24.0,
+                    narration_durs=[10.0, 20.0, 30.0], log=lambda *_: None)
+    got = [round(u["src1"] - u["src0"], 1) for u in out["units"]
+           if u["item"]["kind"] == "narration"]
+    # `_place_block` 이 첫 앵커 앞을 **역방향으로** 백필하므로, 호출 순서를 세면
+    # 문서 첫 나레이션이 마지막 길이를 받는다. 실측 예전 값 [30.0, 20.0, 10.0].
+    eq("문서 순서대로 배분한다", got, [10.0, 20.0, 30.0])
 
 
 def main():
