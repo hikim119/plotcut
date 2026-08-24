@@ -99,7 +99,10 @@ def narration_metrics(nars):
         "conn": end.count("conn") / n,
         "jyo": end.count("jyo"),
         "skew": max(end.count(k) for k in set(end)) / n,
-        "skew_kind": ENDING_KO[max(set(end), key=end.count)],
+        # `max(set(...))` 은 동률일 때 set 순회 순서가 이기는데, 문자열 해시는
+        # 프로세스마다 랜덤이라 **같은 대본을 두 번 검사하면 출력이 달라졌다**
+        # (실측 8회에 `~고`/`~는데` 둘 다 나왔다). 정렬해 순서를 고정한다.
+        "skew_kind": ENDING_KO[max(sorted(set(end)), key=end.count)],
         "final_ratio": end.count("final") / n,
         "conj": sum(1 for t in nars if t.startswith(CONJ)) / n,
         "over": [t for t in nars if len(t) > LONG_CHARS],
@@ -150,18 +153,28 @@ DLG_MARK_MIN = 0.10     # `?`·`!` 로 끝난 줄. 정답 27/24/39% · 나레이
 DLG_COMMA_MAX = 0.10    # 쉼표 든 줄. 정답 0.4% · 원본 영어 27%. 중점 13.7% → 10%
 DLG_MIN_SAMPLE = 20     # 비율 지표는 이 개수 미만이면 안 잰다 (정답 최소 58줄)
 
-_HANGUL = re.compile(r"[가-힣ㄱ-ㅎ]")   # 음절 + 자모 (`ㅅ끼` `ㅋㅋ`)
-_LATIN_RUN = re.compile(r"[A-Za-z]{4,}")
+# 자모를 자음(ㄱ~ㅎ)만 넣으면 `ㅋㅋ` 는 한국어인데 `ㅠㅠ` 는 아닌 게 된다.
+# 모음(ㅏ~ㅣ)까지 넣어 자모 블록 전체를 본다.
+_HANGUL = re.compile(r"[가-힣ㄱ-ㅣ]")   # 음절 + 자모(자음·모음)
+_LATIN_WORD = re.compile(r"[A-Za-z]{2,}")
 
 
 def untranslated(line):
     """번역이 안 남은 줄인가. 정답 248줄 **0건** · 원본 영어 6,249줄 **전수** 적중.
 
-    라틴 **4글자 연속**(영어 단어)이거나 **한글이 한 글자도 없거나**. 3글자까지
-    봐주는 건 `OK`·`FBI`·`TV` 를 안 걸기 위해서다 — 정답엔 라틴이 아예 0건이지만
-    표본이 3편뿐이라 여유를 뒀다. `I go.` 처럼 짧은 영어는 둘째 조건이 잡는다.
+**한글이 한 글자도 없거나**, 라틴 **단어가 셋 이상**이면 안 옮긴 줄이다.
+
+    「라틴 4글자 연속」이던 조건을 버렸다 — **제대로 옮긴 줄을 걸었다.** 실측 오탐:
+    `Marlboro 한 갑 줘` · `California 로 갔어` · `Xbox 사줄게` · `Star Trek 봤어`.
+    브랜드·지명·작품명은 번역해도 로마자로 남는다. 게다가 이건 이 파일의 **유일한
+    ✘** 라 걸리면 `check` 가 exit 1 이고, 사람이 고칠 방법이 번역을 망가뜨리는
+    것뿐이었다.
+
+    단어 셋이 기준인 이유: 영어 문장은 단어가 여럿이고 고유명사는 하나둘이다.
+    실측 — 정답 248줄 오탐 **0개**, 원본 영어 6,249줄 **100% 적중**(옛 조건과 같다).
+    `I go.` 처럼 짧은 영어는 「한글 0글자」가 잡는다.
     """
-    return bool(_LATIN_RUN.search(line)) or not _HANGUL.search(line)
+    return (not _HANGUL.search(line)) or len(_LATIN_WORD.findall(line)) >= 3
 
 
 def dialogue_metrics(lines):
@@ -181,7 +194,10 @@ def dialogue_metrics(lines):
         "mean": round(sum(L) / n, 1),
         "max": max(L), "min": min(L),
         "over": [t for t in lines if len(t) > DLG_LINE_MAX],
-        "mark": sum(1 for t in lines if t.rstrip()[-1:] in "?!") / n,
+        # `""[-1:]` 은 `""` 고 `"" in "?!"` 는 True 다 — 빈 줄이 섞이면 mark 가
+        # 위로 밀려 경고가 가려진다. 빈 줄을 먼저 걷어낸다.
+        "mark": sum(1 for t in lines
+                    if t.rstrip() and t.rstrip()[-1] in "?!") / n,
         "comma": sum(1 for t in lines if "," in t) / n,
         "foreign": [t for t in lines if untranslated(t)],
     }

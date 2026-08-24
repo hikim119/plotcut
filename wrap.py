@@ -154,13 +154,34 @@ def split_narration(text, whole=NARR_WHOLE, head=NARR_HEAD, line=NARR_LINE,
             else:
                 out.append(pp)
         parts = out
-    # 발음할 글자가 없는 조각(문장부호만)은 앞에 붙인다 — 홀로 두면 발화
-    # 가중치가 0이라 시각이 앞 조각과 겹치고 `layout._stack` 이 통째로 버린다.
+    # 발음할 글자가 없는 조각(문장부호만)은 이웃에 붙인다 — 홀로 두면 발화 가중치가
+    # 0이라 시각이 이웃과 겹치고 `layout._stack` 이 그 자막을 통째로 버린다.
+    #
+    # 두 가지를 지킨다:
+    #  · **첫 조각도 붙인다.** 예전엔 `if merged and …` 라 인덱스 0 이 예외였고,
+    #    문장이 문장부호로 시작하면(`.......... 그때 …`) 그 조각이 홀로 남았다.
+    #    앞이 없으면 **뒤에** 붙인다.
+    #  · **`line` 을 넘기지 않는다.** 예전엔 길이 검사가 없어 `나타났는데..........`
+    #    (15자) · `떠나버렸는데?!?!?!?!?!`(16자) 가 나왔다. 넘으면 반대쪽 이웃을
+    #    보고, 양쪽 다 넘으면 짧은 쪽에 붙인다 — **자막이 사라지는 것보다 한 줄이
+    #    긴 게 낫다.** 문장부호 열 개짜리 나레이션은 병리적 입력이다.
     import timing
     merged = []
+    pend = []                      # 앞이 없어 아직 못 붙인 무성 조각
     for pp in parts:
-        if merged and timing.is_silent(pp):
-            merged[-1] = merged[-1] + pp
+        if timing.is_silent(pp):
+            if merged and len(merged[-1]) + len(pp) <= line:
+                merged[-1] += pp
+            else:
+                pend.append(pp)    # 뒤 조각에 붙인다
+            continue
+        if pend:
+            pp = "".join(pend) + pp
+            pend = []
+        merged.append(pp)
+    for pp in pend:                # 끝까지 못 붙인 것 — 짧은 쪽에 얹는다
+        if merged:
+            merged[-1] += pp
         else:
             merged.append(pp)
     return [x for x in (y.strip() for y in merged) if x] or [text]

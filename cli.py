@@ -280,9 +280,17 @@ def cmd_check(a):
                 warns.append("블록%d b-roll 범위가 %.0f초입니다 (권장 %.0f초 이하)."
                              % (bi + 1, w, MAX_BROLL_S))
         for it in blk["items"]:
-            if it["kind"] != "dialogue" or not it["cues"]:
+            # `cues` 만 보면 `@시각` 문단을 통째로 건너뛴다 — `run_script` 가 만드는
+            # 대본은 기본이 `@시각` 이라 이 검사가 **기본 경로에서 안 돌았다.**
+            # b-roll 판정만 span 을 배웠고 형제인 이 둘은 안 배운 채였다.
+            if it["kind"] != "dialogue":
                 continue
-            span = it["cues"][-1]["end_s"] - it["cues"][0]["start_s"]
+            if it["cues"]:
+                span = it["cues"][-1]["end_s"] - it["cues"][0]["start_s"]
+            elif it.get("span"):
+                span = it["span"][1] - it["span"][0]
+            else:
+                continue
             if span > MAX_ITEM_S:
                 errors.append("블록%d 문단 하나가 %.1f초를 덮습니다 (상한 %.0f초): %s"
                               % (bi + 1, span, MAX_ITEM_S, it["text"][:26]))
@@ -481,13 +489,23 @@ def cmd_check(a):
 
 
 def _avg_item_s(doc, pl):
+    """대사 문단 하나가 평균 몇 초인가. 목표 길이 경고가 "대사 문단 약 N개" 를
+    말하는 데 쓴다.
+
+    `cues` 만 세면 `@시각` 대본에서 n=0 → 0.0 이 되고, 그러면 경고가
+    `목표에서 -227초 벗어납니다 —  또는 나레이션 약 147줄을 늘리세요` 로
+    **목적어 없이** 나갔다. `run_script` 의 기본 출력이 `@시각` 이라 그게 기본
+    경로였다. span 도 센다.
+    """
     import script_io
-    n = sum(1 for _, it in script_io.items(doc)
-            if it["kind"] == "dialogue" and it["cues"])
+
+    def counts(it):
+        return it["kind"] == "dialogue" and (it["cues"] or it.get("span"))
+
+    n = sum(1 for _, it in script_io.items(doc) if counts(it))
     if not n:
         return 0.0
-    tot = sum(u["src1"] - u["src0"] for u in pl["units"]
-              if u["item"]["kind"] == "dialogue" and u["item"]["cues"])
+    tot = sum(u["src1"] - u["src0"] for u in pl["units"] if counts(u["item"]))
     return tot / n
 
 

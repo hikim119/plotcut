@@ -186,6 +186,17 @@ def style_tests():
           sum(1 for name, v in gold.items() for t in v["narrations"]
               if len(t) > wrap.NARR_LINE) >= 20, "")
     eq("조각내기는 기본으로 켜져 있다", wrap.NARR_SPLIT, True)
+    # 무성 조각(문장부호만)은 **홀로 남으면 안 된다** — 발화 가중치가 0이라
+    # 시각이 이웃과 겹치고 `layout._stack` 이 그 자막을 통째로 버린다.
+    # 예전엔 `if merged and …` 라 **첫 조각이 예외**였다.
+    import timing as _tm
+    for _t in (".......... 그때 미키가 참교육을 시작했는데",
+               "?!?!?!?!?! 일진들이 냅다 도망쳤고",
+               "그때 미키가 나타났는데 ..........",
+               "결국 아비는 떠나버렸는데 ?!?!?!?!?!"):
+        _ps = wrap.split_narration(_t)
+        check("무성 조각이 홀로 안 남는다: %s" % _t[:14],
+              not any(_tm.is_silent(x) for x in _ps), str(_ps))
 
     _rm = q.narration_metrics(_ref)
     eq("중경삼림도 완결형 0", _rm["final_ratio"], 0.0)
@@ -316,9 +327,21 @@ def dialogue_tests():
     _en = q.dialogue_metrics(["This is an english line.", "I go."])
     eq("영어가 남으면 ✘", len(q.dialogue_issues(_en)[0]), 1)
     eq("두 줄 다 잡힌다", len(_en["foreign"]), 2)
-    # 오탐 — 짧은 약어는 한국어 줄에 그대로 쓴다
-    eq("OK·FBI·TV 는 안 걸린다",
-       q.dialogue_metrics(["OK 알겠어", "FBI가 왔다", "TV 봤어"])["foreign"], [])
+    # 오탐 — **제대로 옮긴 줄을 걸면 안 된다.** 예전 조건(라틴 4글자 연속)이
+    # 브랜드·지명·작품명을 잡았고, 이건 유일한 ✘ 라 exit 1 이었다. 사람이 고칠
+    # 방법이 번역을 망가뜨리는 것뿐이었다.
+    eq("브랜드·지명·약어는 안 걸린다",
+       q.dialogue_metrics(["OK 알겠어", "FBI가 왔다", "TV 봤어",
+                           "Marlboro 한 갑 줘", "California 로 갔어",
+                           "Xbox 사줄게", "Star Trek 봤어"])["foreign"], [])
+    # 자모 모음도 한국어다 — `ㅋㅋ` 는 통과하는데 `ㅠㅠ` 는 ✘ 였다
+    eq("자모 모음도 한국어", q.dialogue_metrics(["ㅋㅋㅋ", "ㅠㅠ", "ㅡㅡ"])["foreign"], [])
+    # 빈 줄이 `?!` 로 끝난 줄로 세이던 것 (`"" in "?!"` 는 True 다)
+    eq("빈 줄은 ?! 끝으로 안 센다",
+       q.dialogue_metrics(["", "", "", "안녕"])["mark"], 0.0)
+    # 동률에서 실행마다 달라지던 것 — 정렬로 고정
+    eq("최빈 어미가 동률에서 고정된다",
+       q.narration_metrics(["그때 갔는데", "결국 왔고"])["skew_kind"], "~고")
 
     # ③ 네거티브 B — **나레이션 문체를 대사에 쓰면 걸린다.**
     #    두 규범이 실제로 갈린다는 것을 코드가 증명한다. 「14자 스코프」의 자물쇠다.
@@ -342,6 +365,14 @@ def dialogue_tests():
           and _cc.index("if not ko:") < _cc.index("quality.dialogue_metrics"))
     check("frozen 문단은 authored_lines 가 뺀다",
           "authored_lines" in _cc and "screen_lines" not in _cc)
+    # `@시각` 대본은 `run_script` 의 기본 출력이다. `cues` 만 보는 검사가 남아
+    # 있으면 **기본 경로에서 안 도는 검사**가 된다. 실측: 목표 길이 경고가
+    # `— <빈칸> 또는 나레이션 약 147줄` 로 목적어 없이 나갔고, 문단 20초·큐
+    # 간격 3초 상한은 통째로 건너뛰었다.
+    check("문단 시간 상한이 span 도 본다",
+          'elif it.get("span"):' in _cc, "cli.cmd_check")
+    _ai = inspect.getsource(cli._avg_item_s)
+    check("_avg_item_s 도 span 을 센다", 'it.get("span")' in _ai, _ai[:80])
 
     # ⑤ 프롬프트 — 실제 **출력**을 본다. 소스를 보면 주석까지 걸린다.
     import script_gen as _sg
@@ -495,6 +526,15 @@ def main():
     # 조각이 1프레임 미만이면 `_stack` 이 조용히 버린다 — 실측 최소 0.48초
     _nd = [x["t_dur"] for x in pl["subs"] if x["kind"] == "narration"]
     check("조각이 1프레임보다 짧지 않다", min(_nd) >= 1.0 / 24, "%.3f초" % min(_nd))
+    # 하한 가드가 **평균**을 보던 시절엔 통과한 문장 안에 하한보다 짧은 조각이
+    # 생겼다(실측 평균 0.317초 통과 · 조각 0.25초). 개별 조각으로 못 박는다.
+    _multi = {}
+    for x in pl["subs"]:
+        if x["kind"] == "narration":
+            _multi.setdefault(x.get("bi"), []).append(x)
+    check("모든 나레이션 조각이 하한을 지킨다",
+          min(_nd) >= layout.NARR_MIN_PIECE_S - 1e-9,
+          "최소 %.3f초 · 하한 %.2f초" % (min(_nd), layout.NARR_MIN_PIECE_S))
     # 조각내기를 꺼도 **자막 카드 수 말고는 아무것도 안 달라져야** 한다.
     # 이 한 쌍이 "렌더링만 바꿨다"를 실행 가능한 명제로 만들고, 되돌리기
     # 스위치가 실제로 도는지도 영원히 검증한다.

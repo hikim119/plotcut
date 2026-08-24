@@ -473,7 +473,13 @@ def _split_narration(subs, min_seg, min_piece_s=NARR_MIN_PIECE_S):
             # 되감기 경고 상황에서도 조각이 다음 자막을 넘지 않게 — 넘으면
             # 정렬이 깨지고 「동시에 뜨는 자막은 하나뿐」이 무너진다.
             span = min(span, max(0.0, nxt - s["t_start"]))
-        if len(parts) < 2 or span / len(parts) < min_piece_s:
+        # **평균이 아니라 실제 조각**을 본다. 시각은 `spread_lines` 가 발화 가중치
+        # 비례로 나누므로 균등 몫과 다르다 — 예전엔 평균만 봐서 가드를 통과한
+        # 문장 안에 하한보다 짧은 조각이 생겼다(실측: 평균 0.317초로 통과했는데
+        # 조각이 0.25초). docstring 이 약속한 것과 코드가 달랐다.
+        cut = spread_lines(s["t_start"], s["t_start"] + span, parts)
+        ends = [t for t, _ in cut[1:]] + [s["t_start"] + span]
+        if len(parts) < 2 or min(e - t for (t, _), e in zip(cut, ends)) < min_piece_s:
             out.append(s)
             continue
         for k, (t, ln) in enumerate(spread_lines(s["t_start"],
