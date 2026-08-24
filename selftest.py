@@ -342,7 +342,26 @@ def main():
     st = pl["stats"]
     near("총 길이 168.5초", pl["total_s"], 168.5, 0.05)
     eq("영상 구간 48개", st["cuts"], 48)
-    eq("자막 71개 (대사 51 + 나레이션 19 + 제목 1)", st["subs"], 71)
+    eq("자막 81개 (대사 61 + 나레이션 19 + 제목 1)", st["subs"], 81)
+    # 예전엔 **한 덩어리의 여러 줄이 같은 t_start** 를 받아서, `_stack` 이 길이를
+    # 「다음 자막 시작까지」로 재는 순간 앞줄이 0초가 되어 버려졌다. 실측으로
+    # 2줄짜리 자막 10개의 첫 줄이 10개 전부 사라졌다 — `내일 저녁 8시` 가 날아가
+    # 약속 시각이 화면에 안 나왔다. 대본이 기대하는 줄이 **전부** 살아야 한다.
+    _want = 0
+    for _, _it in script_io.items(doc):
+        if _it["kind"] != "dialogue":
+            continue
+        _tr = script_io.screen_lines(_it)
+        _want += len(_tr) if _tr else sum(len(c["lines"]) for c in _it["cues"])
+    eq("대사 줄이 하나도 안 사라진다",
+       sum(1 for x in pl["subs"] if x["kind"] == "dialogue"), _want)
+    _multi = [c for _, i2 in script_io.items(doc) if i2["kind"] == "dialogue"
+              for c in i2["cues"] if len(c["lines"]) > 1]
+    _shown = {x["lines"][0] for x in pl["subs"] if x["kind"] == "dialogue"}
+    check("2줄 큐의 첫 줄도 화면에 있다 (실측 10개)",
+          _multi and all(c["lines"][0] in _shown for c in _multi),
+          "%d개 중 %d개 사라짐"
+          % (len(_multi), sum(1 for c in _multi if c["lines"][0] not in _shown)))
     # 대사에는 시작과 끝이 있다. 끝났는데도 남겨 두면 같은 글자가 뒤에 또 나온다.
     _seen = {}
     for x in pl["subs"]:

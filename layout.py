@@ -45,6 +45,33 @@ def narration_seconds(text, ms_per_unit=timing.MS_PER_UNIT):
     return timing.raw_weight(text) * ms_per_unit / 1000.0
 
 
+def spread_lines(t0, t1, lines):
+    """한 덩어리의 여러 줄에 **시각을 나눠** 준다. → [(t_start, 줄), …]
+
+    같은 `t_start` 를 주면 안 된다. `_stack` 이 자막 길이를 「다음 자막이 시작할
+    때까지」로 재기 때문에, 두 줄이 같은 시각이면 앞줄이 길이 0이 되어 1프레임
+    미만으로 **버려진다.** 실측(중경삼림 레퍼런스): 2줄짜리 자막 10개의 첫 줄이
+    10개 전부 화면에서 사라졌다 — `내일 저녁 8시` 가 날아가 약속 시각이 안 나왔다.
+
+    나누는 기준은 글자 수가 아니라 **발화 가중치**다. 공백·문장부호는 가중치가
+    0이라(`timing._speech_weight`) `받게 된 할`(6자)은 실제 4음절이다. 글자로
+    나누면 실제보다 50% 길게 잡힌다.
+
+    발음할 것이 하나도 없는 줄(문장부호만)은 가중치가 0이라 앞줄과 시각이 겹친다
+    — 그런 줄은 최소 몫을 준다.
+    """
+    if len(lines) <= 1:
+        return [(t0, ln) for ln in lines]
+    w = [max(timing.raw_weight(ln), 0.5) for ln in lines]
+    tot = sum(w)
+    span = max(0.0, t1 - t0)
+    out, acc = [], 0.0
+    for ln, x in zip(lines, w):
+        out.append((t0 + span * acc / tot, ln))
+        acc += x
+    return out
+
+
 # ── 배치 ────────────────────────────────────────────────────────────────────
 
 def _pre_post(cue_a, cue_b, by_idx):
@@ -140,6 +167,9 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
 
     narration_durs — TTS 정렬 결과가 있으면 나레이션 순서대로의 실제 길이.
     """
+    # 함수 안에서 부른다 — `script_io` 는 `timing`·`wrap` 만 쓰므로 순환은 없지만,
+    # 모듈 상단에서 서로를 부르면 나중에 한쪽이 다른 쪽을 import 할 때 터진다.
+    import script_io
     warnings = []
 
     def warn(msg):
@@ -290,9 +320,9 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
         if it["kind"] == "dialogue" and (it["cues"] or it.get("span")):
             # 화면에 띄울 것: 번역(`>`)이나 번호 앵커(`#476`)가 있으면 대본에 적힌
             # 한국어를, 아니면 자막 원문을 그대로 쓴다.
-            tr = (it.get("trans")
-                  or (list(it["lines"])
-                      if (it.get("cue_ref") or it.get("span")) else None))
+            # 판단을 여기 인라인으로 두면 검사가 따로 구현하게 되고 언젠가
+            # 화면과 어긋난다 — `script_io` 에 하나만 둔다.
+            tr = script_io.screen_lines(it)
             # 자막은 **한 줄이 한 칸**을 차지한다. 두 줄짜리 큐를 카드 하나로
             # 띄우면 그 칸만 두 배 높아져 줄 간격이 들쭉날쭉해진다.
             # 같은 시각에 시작하므로 두 줄이 함께 떴다가 함께 밀려 올라간다.
@@ -300,16 +330,18 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
                 # 시각 앵커면 자막 큐가 아예 없다 — 구간 시작에 띄운다
                 c0 = it["cues"][0] if it["cues"] else None
                 at = max(u["src0"], c0["start_s"]) if c0 else u["src0"]
-                for ln in tr:
-                    subs.append({"t_start": t_at(p, at),
+                end = max(at, it["cues"][-1]["end_s"]) if it["cues"] else u["src1"]
+                for t, ln in spread_lines(t_at(p, at), t_at(p, end), tr):
+                    subs.append({"t_start": t,
                                  "lines": [ln], "kind": "dialogue",
                                  "bi": u["bi"],
                                  "src_no": c0["src_no"] if c0 else None})
             else:
                 for c in it["cues"]:
                     at = t_at(p, max(u["src0"], c["start_s"]))
-                    for ln in c["lines"]:
-                        subs.append({"t_start": at, "lines": [ln],
+                    end = t_at(p, max(c["start_s"], c["end_s"]))
+                    for t, ln in spread_lines(at, max(at, end), c["lines"]):
+                        subs.append({"t_start": t, "lines": [ln],
                                      "kind": "dialogue",
                                      "bi": u["bi"], "src_no": c["src_no"]})
         else:
@@ -330,7 +362,6 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
                         "src_no": None})
 
     # ── 7. 블록별 헤더 재계산 (있던 범위는 잃지 않는다) ────────────────
-    import script_io
     headers = []
     for bi, blk in enumerate(doc["blocks"]):
         mine = [u for u in units if u["bi"] == bi]

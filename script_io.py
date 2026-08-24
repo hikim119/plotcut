@@ -582,6 +582,35 @@ def narration_text(doc, limit=12):
     return "\n\n".join(out) + "\n"
 
 
+def screen_lines(it):
+    """대사 문단에서 **화면에 나갈 줄**. None 이면 자막 원문이 그대로 나간다.
+
+    `layout` 이 자막을 만들 때 쓰는 판단과 **같은 것**이어야 한다 — 검사가
+    화면에 안 나가는 줄을 재면 통과/실패가 화면과 어긋난다. 그래서 인라인 식을
+    두지 않고 여기 하나만 둔다.
+    """
+    if it.get("trans"):
+        return list(it["trans"])
+    if it.get("cue_ref") or it.get("span"):
+        return list(it["lines"])
+    return None
+
+
+def authored_lines(it):
+    """그중 **사람이 한국어로 새로 쓴** 줄만. `@시각`만 붙은 문단은 뺀다.
+
+    `screen_lines` 와 딱 한 가지가 다르다 — `span` 을 안 본다. frozen 대본
+    (`--freeze`)은 한국어 자막이어도 `@01:25:02.83~… 대사원문` 으로 다시 쓰이는데,
+    그 줄은 **자막 원문**이라 규칙 6 때문에 사람이 못 고친다. 번역 문체를 거기서
+    재면 **고칠 수 없는 ✘** 만 쌓인다.
+    """
+    if it.get("trans"):
+        return list(it["trans"])
+    if it.get("cue_ref"):
+        return list(it["lines"])
+    return None
+
+
 def narrations(doc):
     return [it for blk in doc["blocks"] for it in blk["items"]
             if it["kind"] == "narration"]
