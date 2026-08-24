@@ -232,8 +232,18 @@ def ending_tests():
 
 
 def main():
+    # 픽스처만 쓰는 회귀는 **test/ 없이도** 돈다 — 두 함수의 독스트링이 그렇게
+    # 적혀 있는데도 예전엔 아래 조기 return 뒤에 있어서, 받아 쓴 사람 PC 에서는
+    # 문체·결말 임계값이 통째로 안 돌았다. 조용히 죽은 검사가 제일 위험하다.
+    style_tests()
+    ending_tests()
     if not SRT.exists() or not REF.exists():
-        print("테스트 자료가 없습니다 (%s). 건너뜁니다." % TEST)
+        print("\n테스트 자료가 없습니다 (%s). 나머지는 건너뜁니다." % TEST)
+        print("\n" + "=" * 60)
+        if _fail:
+            print("실패 %d건: %s" % (len(_fail), " / ".join(_fail)))
+            return 1
+        print("통과 %d건 — 픽스처 회귀만 돌았습니다" % _pass)
         return 0
 
     import subtitle
@@ -1065,9 +1075,6 @@ def main():
     eq("자막 시각 불변",
        [round(x["t_start"], 4) for x in _a["subs"]],
        [round(x["t_start"], 4) for x in _b["subs"]])
-
-    style_tests()
-    ending_tests()
 
     print("\n" + "=" * 60)
     if _fail:
