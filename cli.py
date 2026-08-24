@@ -266,7 +266,14 @@ def cmd_check(a):
 
     # 시간 상한
     for bi, blk in enumerate(doc["blocks"]):
-        has_dlg = any(i["kind"] == "dialogue" and i["cues"] for i in blk["items"])
+        # `span` 도 같이 본다. `@시각`으로 매칭된 문단은 **`cues` 가 비어 있다** —
+        # `--freeze` 우회를 막을 때 일부러 그렇게 뒀다(채우면 자막 노출 시점이
+        # 밀리고 되감기 경고가 LayoutError 로 승격된다). `cues` 만 보면 시각이
+        # 박힌 대본은 **모든 블록이 「대사 없음」**으로 보여서, 범위가 상한만
+        # 넘으면 b-roll 경고가 무조건 뜬다. 실측: 대사 58문단짜리 대본에서
+        # 오탐 4건 — 대사가 10문단 있는 블록까지 걸렸다.
+        has_dlg = any(i["kind"] == "dialogue" and (i["cues"] or i.get("span"))
+                      for i in blk["items"])
         if not has_dlg and blk["win"]:
             w = blk["win"][1] - blk["win"][0]
             if w > MAX_BROLL_S:
