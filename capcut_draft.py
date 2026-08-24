@@ -219,14 +219,19 @@ def _track(track_type, segments, render_index, flag=0, attribute=0):
 # ── 1층: 순수 조립 ──────────────────────────────────────────────────────────
 
 # ── 자막 스타일 ─────────────────────────────────────────────────────────────
-# 자막은 블록마다 **위로 쌓인다.** 새 줄이 늘 맨 아래(SUB_Y0)에 오고 앞 줄이
-# 한 칸(SUB_ROW_STEP)씩 위로 밀린다. 색으로 대사(흰색)와 나레이션(노랑)을 구분한다.
+# 자막은 **한 번에 하나만** 뜨고(`layout._stack` 이 다음 자막 직전에 끊는다)
+# 자리는 **안 움직인다** — 전부 y = SUB_Y0. 색으로 대사(흰색)와
+# 나레이션(노랑)을 구분한다.
 #
-# 쌓인 줄들은 **시간이 겹치므로** 한 트랙에 못 넣는다. 대신 **줄 자리마다**
-# 트랙을 하나씩 둔다 — 맨 아래 줄 트랙, 그 위 줄 트랙, … 같은 자리끼리는
-# 시간이 안 겹쳐서 트랙 하나에 그대로 들어가고, y 도 트랙마다 고정된다.
-SUB_Y0 = -0.50         # 맨 아래 줄
-SUB_ROW_STEP = 0.09    # 한 칸 위 (12pt + 테두리 기준)
+# 한때 블록 안 순서(`row`)만큼 y 를 한 칸씩 올렸다. 그건 앞 자막을 **남겨서
+# 쌓을 때**의 좌표인데, 앞 자막을 지우도록 바꾼 뒤에도 좌표만 남아 있었다.
+# 결과는 화면에 하나뿐인 자막이 아래에서 위로 기어 올라갔다가 블록이 바뀌면
+# 뚝 떨어지는 것 — 실측 y −0.50 → −0.14 (여덟 칸). 하나만 보이면 움직일
+# 이유가 없다.
+#
+# **`row` 는 그대로 쓴다 — 다만 y 가 아니라 트랙을 고르는 데만.** 줄 자리마다
+# 트랙이 하나씩 있어야 CapCut 에서 "몇 번째 단"을 통째로 고를 수 있다.
+SUB_Y0 = -0.50         # 자막 자리 (화면 아래). 모든 자막이 여기 온다
 SUB_STYLES = {
     "dialogue":  {"color": (1.0, 1.0, 1.0),     "size": 12.0, "transform_y": SUB_Y0,
                   "border_color": (0.0, 0.0, 0.0), "border_width": 40.0},
@@ -334,8 +339,8 @@ def build_timeline(plan, movie, canvas="vertical", fit="fit",
         if not text.strip():
             continue
         row = 0 if kind == "title" else int(sub.get("row", 0))
-        y = (float(style["transform_y"]) if kind == "title"
-             else SUB_Y0 + row * SUB_ROW_STEP)
+        # y 는 row 를 안 본다 — 자막은 한 번에 하나뿐이라 자리를 옮길 이유가 없다.
+        y = float(style["transform_y"]) if kind == "title" else SUB_Y0
         t_mid, t_mat = _text_material(
             text, color=tuple(style["color"]), size=float(style["size"]),
             border_color=tuple(style["border_color"]),
