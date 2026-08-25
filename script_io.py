@@ -271,7 +271,24 @@ def read(text, cues, log=print):
                                  "note": ""})
 
     if not blocks:
-        raise ScriptError("블록 헤더 '[시각 ~ 시각]' 이 하나도 없습니다.")
+        # 헤더가 **글자로는 있는데** 문단으로 안 잡히는 경우가 있다.
+        # 빈 줄이 문단 구분인데 그걸 안 넣으면 파일 전체가 한 문단이 되고,
+        # 헤더 줄이 그 안에 묻혀 `parse_header` 가 못 읽는다. 그런데 예전
+        # 메시지는 「하나도 없습니다」라 **파일에 뻔히 보이는데 없다고 한다.**
+        # 실측: 친구가 받자마자 이걸 봤고 「전 버전 오류인가」로 되물었다.
+        if _HEADER_PAT.search(text.replace("\r", "")) or re.search(
+                r"\[\s*\d{1,3}:\d{1,2}:\d{1,2}", text):
+            raise ScriptError(
+                "블록 헤더는 있는데 **문단이 안 나뉘어 있습니다.**" + "\n"
+                "  빈 줄 하나가 문단 구분입니다 — 헤더·대사·나레이션 사이를"
+                " 빈 줄로 띄우세요:" + "\n"
+                "    [01:25:03 ~ 01:25:07]" + "\n" * 2
+                + "    우리 집에서 뭐 해요?" + "\n" * 2
+                + "    (좋아하는 남자의 집에 몰래 들어왔다가)")
+        raise ScriptError(
+            "블록 헤더 '[시각 ~ 시각]' 이 하나도 없습니다." + "\n"
+            "  이 칸에는 「타임라인 대본」 txt 를 넣습니다."
+            " 자막 파일이면 자막 칸에 넣으세요.")
 
     stats = _match_all(blocks, cues, warnings, log)
     return {"title": title, "blocks": blocks,

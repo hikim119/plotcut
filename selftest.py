@@ -419,6 +419,7 @@ def dialogue_tests():
     foreign_span_tests()
     variant_tests()
     clierr_tests()
+    header_msg_tests()
     usererr_tests()
     launcher_tests()
     width_error_tests()
@@ -714,6 +715,37 @@ def foreign_span_tests():
              + "%s %s" % (sio.fmt_span(c["start_s"], c["end_s"]), line) + chr(10))
         eq("%s — 그 구간의 언어로 판정한다" % label,
            sio.read(t, mix, log=lambda *_: None)["stats"]["time_mismatch"], want)
+
+
+def header_msg_tests():
+    """헤더가 **있는데** 없다고 하지 않는가. 자산 없이 돈다.
+
+    빈 줄이 문단 구분인데 그걸 안 넣으면 파일 전체가 한 문단이 되고, 헤더
+    줄이 그 안에 묻혀 안 읽힌다. 그런데 예전 메시지는 「하나도 없습니다」라
+    **파일에 뻔히 보이는데 없다고 했다.** 친구가 받자마자 이걸 보고
+    「전 버전 오류인가」로 되물었다.
+    """
+    import script_io as sio
+    print()
+    print("[28] 블록 헤더 오류 문구")
+    cue = [{"idx": 1, "src_no": 1, "start_s": 60.0, "end_s": 62.0,
+            "text": "대사 한 줄", "lines": ["대사 한 줄"]}]
+    NL = chr(10)
+    joined = "제목" + NL + "[00:01:00 ~ 00:01:30]" + NL + "대사 한 줄"
+    e = _grab(lambda: sio.read(joined, cue, log=lambda *_: None))
+    check("헤더가 붙어 있으면 그렇다고 말한다",
+          isinstance(e, sio.ScriptError) and "문단이 안 나뉘어" in str(e), str(e)[:80])
+    check("빈 줄이 구분이라고 알려 준다", "빈 줄" in str(e), str(e)[:80])
+    none = "아무 메모 한 줄"
+    e2 = _grab(lambda: sio.read(none, cue, log=lambda *_: None))
+    check("헤더가 진짜 없으면 다른 말을 한다",
+          isinstance(e2, sio.ScriptError) and "하나도 없습니다" in str(e2), str(e2)[:80])
+    check("어느 칸에 넣는지 알려 준다", "자막 칸" in str(e2), str(e2)[:80])
+    # 정상 대본은 여전히 통과해야 한다 (게이트가 과하게 열리지 않았는지)
+    ok = ("제목" + NL * 2 + "[00:01:00 ~ 00:01:30]" + NL * 2 + "대사 한 줄" + NL)
+    check("정상 대본은 안 걸린다",
+          not isinstance(_grab(lambda: sio.read(ok, cue, log=lambda *_: None)),
+                         sio.ScriptError))
 
 
 def usererr_tests():
