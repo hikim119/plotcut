@@ -208,6 +208,18 @@ def cmd_check(a):
               st.get("time_mismatch", 0), st.get("time_nocue", 0)))
     print("  매칭: 서명 %d · 2큐병합 %d · 유사 %d%s · 강등 %d"
           % (st["by_sig"], st["by_merge"], st["by_diff"], _tm, st["demoted"]))
+    # `#a-b` 폭 상한 위반은 **✘ 다.** 어제 넣을 때 ⚠ 로 뒀는데, 생성 프롬프트가
+    # 에이전트에게 「✘ 만 고치고 경고는 남긴 채 끝내라」고 시킨다
+    # (`script_gen.py` 의 검증 지시). 그래서 잡아 놓고도 자동 수정 루프에
+    # 안 들어가 그대로 나갔다 — 실측: `#1-10` 짜리 대본이 `통과 — 경고 16건`
+    # 으로 exit 0 이었다. 위반하면 자막 9줄이 조용히 사라진다.
+    # 채택 근거: 실제 생성 대본 10개 범위 **전부 폭 2 이하**(위반 0), 정답
+    # 3편은 `#a-b` 를 아예 안 쓴다. 겹침 없음.
+    if st.get("too_wide"):
+        errors.append(
+            "`#a-b` 로 연속 큐를 %d군데에서 상한(%d개)보다 넓게 묶었습니다 — "
+            "그 자리에서 자막 여러 줄이 한 줄로 뭉개집니다. 문단을 나누세요."
+            % (st["too_wide"], script_io.MAX_MERGE))
     if st.get("time_mismatch") or st.get("time_nocue"):
         errors.append(
             "`@시각` 대본의 대사 %d개가 그 시각의 자막과 다릅니다 — "

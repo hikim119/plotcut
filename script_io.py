@@ -305,14 +305,23 @@ def _pool(cues, win):
 
 
 def _srt_korean(cues):
-    """자막이 한국어인가. `_verify_span` 의 텍스트 대조를 켤지 정한다."""
+    """이 큐들이 한국어인가. `_verify_span` 의 텍스트 대조를 켤지 정한다.
+
+    **파일 전체가 아니라 그 시각의 큐만 본다.** 예전엔 `is_korean(전체)` 를
+    한 번 계산해 모든 아이템에 그대로 썼는데, `is_korean` 은 **앞 400큐만**
+    샘플링한다(`subtitle.py:257`). 그래서 앞뒤 언어가 다른 자막에서 양쪽으로
+    다 틀렸다 — 실측:
+      · 앞 400영어 + 뒤 100한국어 → 뒤쪽에 **지어낸 대사를 넣어도 경고 0건**
+      · 앞 400한국어 + 뒤 100영어 → 뒤쪽 **정상 번역이 「어긋남」으로 오탐**
+    큐 한두 개면 비율이 0.0 아니면 1.0 이라 지역 판정이 오히려 정확하다.
+    """
     if not cues:
         return True
     import subtitle
     return subtitle.is_korean(cues)
 
 
-def _verify_span(it, cues, eps=0.05, check_text=True):
+def _verify_span(it, cues, eps=0.05):
     """`@시각` 이 박힌 대사를 자막과 **다시** 대조한다. 자막이 있을 때만 부른다.
 
     `_match_all` 은 span 이 있으면 자막을 안 본다 — 그게 이 형식의 목적이다
@@ -328,8 +337,12 @@ def _verify_span(it, cues, eps=0.05, check_text=True):
     셋 다 ✘ 로 실패했다. 게다가 이건 **생성 중에 에이전트가 보는 검사**라
     (프롬프트가 ✘ 를 5회까지 고치라고 시킨다) 멀쩡한 번역을 되돌리게 만든다.
 
-    그래서 `check_text` 로 **텍스트 대조만** 끈다. "그 시각에 자막이 하나도
-    없다"(`없음`)는 언어와 무관하게 시각이 틀렸다는 뜻이므로 계속 본다.
+    그래서 **텍스트 대조만** 끈다. "그 시각에 자막이 하나도 없다"(`없음`)는
+    언어와 무관하게 시각이 틀렸다는 뜻이므로 계속 본다.
+
+    언어는 **그 구간의 큐로** 정한다(`_srt_korean(inside)`). 파일 전체로
+    한 번 정하면 안 된다 — `is_korean` 이 앞 400큐만 샘플링해서, 앞뒤 언어가
+    다르면 양쪽으로 다 틀린다.
 
     결과는 **새 키**(`span_cues` / `span_ratio`)에만 담는다. `it["cues"]` 를
     채우면 layout 이 조용히 달라진다 — 자막 노출이 PRE 만큼 밀리고, 되감기
@@ -343,7 +356,10 @@ def _verify_span(it, cues, eps=0.05, check_text=True):
     if not inside:
         it["span_ratio"] = 0.0
         return "없음"
-    if not check_text:
+    # 언어는 **오직 이 구간의 큐로** 정한다. 호출부의 전역 판정은 안 쓴다 —
+    # 전역이 「외국어」라고 해도 그 시각이 한국어면 대조해야 지어낸 대사를 잡고,
+    # 전역이 「한국어」라도 그 시각이 외국어면 대조하면 정상 번역을 오탐한다.
+    if not _srt_korean(inside):
         it["span_ratio"] = 1.0
         return None
     want = sig(" ".join(" ".join(c["lines"]) for c in inside))
@@ -361,11 +377,10 @@ def audit_spans(doc, cues):
     out = []
     if not cues:
         return out
-    ko = _srt_korean(cues)
     for bi, it in items(doc):
         if it["kind"] != "dialogue" or not it.get("span") or it.get("cue_ref"):
             continue
-        why = _verify_span(it, cues, check_text=ko)
+        why = _verify_span(it, cues)
         if why:
             out.append((bi, it, why))
     return out
@@ -438,7 +453,7 @@ def _match_all(blocks, cues, warnings, log):
                 it["note"] = "시각"
                 stats["by_time"] += 1
                 if cues:
-                    why = _verify_span(it, cues, check_text=_srt_korean(cues))
+                    why = _verify_span(it, cues)
                     if why == "없음":
                         stats["time_nocue"] += 1
                         warnings.append(

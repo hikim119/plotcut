@@ -416,6 +416,7 @@ def dialogue_tests():
     foreign_span_tests()
     variant_tests()
     clierr_tests()
+    width_error_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -620,6 +621,48 @@ def foreign_span_tests():
                                       + " 완전히 지어낸 대사입니다", 1),
                   ko_cues, log=lambda *_: None)
     eq("한국어 자막 — 지어낸 대사는 잡는다", d3["stats"]["time_mismatch"], 1)
+
+    # ── 앞뒤 언어가 다른 자막 ────────────────────────────────────────────
+    # `is_korean` 은 **앞 400큐만** 샘플링한다. 파일 전체로 한 번 판정해
+    # 모든 아이템에 쓰면 뒤쪽 구간에서 양쪽으로 다 틀린다 — 실측으로
+    # ① 지어낸 대사를 놓치고 ② 정상 번역을 오탐했다.
+    def _cue(i, t):
+        return {"idx": i, "src_no": i, "start_s": i * 2.0, "end_s": i * 2.0 + 1.5,
+                "text": t, "lines": [t]}
+
+    for label, front, back, made_up, want in (
+            ("앞영어+뒤한국어", "English line number %d",
+             "순수 한국어 자막 문장 번호 %d", True, 1),
+            ("앞한국어+뒤영어", "한국어 자막 문장 번호 %d",
+             "English line number %d", False, 0)):
+        mix = ([_cue(i, front % i) for i in range(1, 401)]
+               + [_cue(i, back % i) for i in range(401, 501)])
+        c = mix[450]
+        line = ("완전히 지어낸 한국어 대사입니다" if made_up
+                else "정상적으로 번역한 한국어 대사")
+        t = ("제목" + chr(10) * 2 + "[00:00:10 ~ 03:00:00]" + chr(10) * 2
+             + "%s %s" % (sio.fmt_span(c["start_s"], c["end_s"]), line) + chr(10))
+        eq("%s — 그 구간의 언어로 판정한다" % label,
+           sio.read(t, mix, log=lambda *_: None)["stats"]["time_mismatch"], want)
+
+
+def width_error_tests():
+    """`#a-b` 폭 상한은 **✘ 여야 한다.** 자산 없이 돈다.
+
+    어제 ⚠ 로 넣었는데, 생성 프롬프트가 에이전트에게 「✘ 만 고치고 경고는
+    남긴 채 끝내라」고 시킨다. 그래서 잡아 놓고도 자동 수정 루프에 안 들어가
+    그대로 나갔다 — 실측: `#1-10` 대본이 `통과 — 경고 16건` 으로 exit 0.
+    """
+    import inspect
+    import cli
+    print()
+    print("[25] `#a-b` 폭 상한은 ✘")
+    src = inspect.getsource(cli.cmd_check)
+    check("`too_wide` 를 errors 에 넣는다",
+          'st.get("too_wide")' in src and "errors.append" in src)
+    # ⚠ 로만 두면 exit 0 이 된다 — 그 사실을 문구로 못 박는다
+    check("왜 ✘ 인지가 코드에 적혀 있다",
+          "경고는 남긴 채" in src or "자동 수정 루프" in src)
 
 
 def nardur_tests():
