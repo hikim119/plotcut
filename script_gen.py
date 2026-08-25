@@ -284,11 +284,36 @@ def _v_context(lines):
     ])
 
 
+# ── 대결에서 이겨서 **기본에 들어간** 것 ─────────────────────────────────────
+# 같은 영화로 기준선과 붙여 블라인드·순서반전 쌍대 비교를 했다. 자동 지표로는
+# 못 가른다 — 변형의 블록·대사 수가 전부 기준선 편차 안이고, 같은 프롬프트로도
+# 쓴 구간이 89.9분 vs 23.7분으로 갈린다.
+#
+#   v2_dense    75% (6/8)   flow 3/4 · gut 3/4
+#   v4_context  67% (8/12)  flow 3/6 · gut 5/6   (robber 4/4 완승)
+#
+# **안 넣은 것과 이유** — 다음 사람이 같은 걸 다시 시도하지 않도록 남긴다:
+#   v1_reaction 38% (3/8)  「더 반응체로」. 심사자들은 **맥락을 더** 달라는데
+#                          이 변형은 맥락을 더 걷어낸다. 방향이 반대였다.
+#   v3_nostyle  50% (4/8)  `style_example.txt` 지시를 빼도 대결에서 차이가
+#                          없었다. 프롬프트의 61%가 그 파일을 가리키는데도.
+#                          n=8 이라 **제거 근거로는 약해서** 그대로 둔다.
+_SHIPPED = (_v_context, _v_dense)
+
+
+def _ablate(lines):
+    """기본에 들어간 것을 도로 빼서 예전 프롬프트로 되돌린다 (A/B 되감기용)."""
+    return lines
+
+
 VARIANTS = {
     "v1_reaction": _v_reaction,
     "v2_dense": _v_dense,
     "v3_nostyle": _v_nostyle,
     "v4_context": _v_context,
+    # 이긴 것을 넣은 뒤에도 **되돌려 비교할 수 있어야** 한다. 이 키를 주면
+    # `_SHIPPED` 적용을 건너뛰어 예전(c0274042ddce636c) 프롬프트가 나온다.
+    "before": _ablate,
 }
 
 
@@ -465,13 +490,20 @@ def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
             "**거의 다** 옮겼고(한국어 큐 ÷ 원본 큐 중앙 1.00), 10큐 넘는 장면은",
             "**중앙 0.61**까지 줄였다(최소 0.12). **긴 장면일수록 더 버린다.**",
         ]
+    # 대결에서 이긴 조항은 **항상** 들어간다. 리터럴에 손으로 박지 않고 함수로
+    # 거는 이유: `variant="before"` 로 언제든 되돌려 다시 붙여 볼 수 있어야
+    # 한다. 이긴 근거가 n=8·n=12 라 나중에 뒤집힐 수 있다.
+    if variant != "before":
+        for fn in _SHIPPED:
+            lines = fn(lines)
     # 변형은 `extra` 앞에 건다 — `추가 지시(최우선)` 는 언제나 맨 끝이어야
     # 사람이 준 지시가 제일 세게 걸린다.
     if variant:
         if variant not in VARIANTS:
             raise GenError("모르는 프롬프트 변형: %s (%s)"
                            % (variant, ", ".join(VARIANTS)))
-        lines = VARIANTS[variant](lines)
+        if variant != "before":
+            lines = VARIANTS[variant](lines)
     if extra.strip():
         lines += ["", "추가 지시(최우선): " + extra.strip()]
     return "\n".join(lines)

@@ -478,7 +478,16 @@ def variant_tests():
     print("[23] 프롬프트 변형")
     base = sg.build_prompt("x.srt", "o.txt", 180)
     got = hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
-    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "c0274042ddce636c")
+    # 대결에서 이긴 조항 둘(v4_context 67% · v2_dense 75%)을 넣으면서 한 번 바꿨다.
+    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "104207fa1aef7885")
+    # 되돌릴 길이 살아 있어야 한다 — 이긴 근거가 n=8·n=12 라 뒤집힐 수 있다.
+    old = sg.build_prompt("x.srt", "o.txt", 180, variant="before")
+    eq("`before` 로 예전 프롬프트가 그대로 나온다",
+       hashlib.sha256(old.encode("utf-8")).hexdigest()[:16], "c0274042ddce636c")
+    for _k in ("누가 말하는지 알게 해라", "셋업을 버리고", "줄기를 줄여라",
+               "대사를 잘게 끊어라"):
+        check("이긴 조항이 기본에 있다: %s" % _k, _k in base)
+        check("되돌리면 없다: %s" % _k, _k not in old)
     check("변형을 안 주면 변형 코드가 안 돈다", sg.build_prompt(
         "x.srt", "o.txt", 180, variant=None) == base)
     for v in sg.VARIANTS:
