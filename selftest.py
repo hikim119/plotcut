@@ -466,6 +466,33 @@ def width_tests():
           any("상한" in w for w in d3["warnings"]), str(d3["warnings"]))
 
 
+def _canon_prompt(text):
+    """프롬프트에서 **환경에 따라 달라지는 부분을 빼고** 해시한다.
+
+    그냥 해시하면 남의 PC 에서 무조건 실패한다. 두 가지가 환경을 탄다:
+
+      1. **절대경로** — `style_example.txt` · `AGENTS.md` · 자막 · 출력 ·
+         `cli.py` 경로가 프롬프트에 박힌다. 폴더가 다르면 해시가 다르다.
+      2. **`대본예시/` 유무** — 그 폴더가 없으면 관련 지시 네 줄이 통째로
+         빠진다(`script_gen` 의 `is_dir() and glob`). 새로 클론한 사람에겐
+         그 폴더가 없다(gitignore 대상).
+
+    실측: 임시 폴더에 새로 클론해서 돌리니 정확히 이 두 가지로 실패했다.
+
+    그래서 **문체 규칙 블록만** 찍는다. 프롬프트의 61%이고, 변형이 건드리는
+    곳이고, 경로도 조건 분기도 없다 — 문구가 바뀌면 그것만으로 값이 바뀐다.
+    """
+    lines = text.split(chr(10))
+    try:
+        i = next(k for k, ln in enumerate(lines)
+                 if "줄거리 요약과 갈리는 지점은 다섯이다" in ln)
+        j = next(k for k, ln in enumerate(lines)
+                 if "영화의 말투를 따라간다" in ln)
+    except StopIteration:
+        return "문체 블록을 못 찾았다"
+    return chr(10).join(lines[i:j + 1])
+
+
 def variant_tests():
     """프롬프트 변형 — **기본값은 한 글자도 안 변한다.** 자산 없이 돈다.
 
@@ -479,11 +506,13 @@ def variant_tests():
     print()
     print("[23] 프롬프트 변형")
     base = sg.build_prompt("x.srt", "o.txt", 180)
-    got = hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+    got = hashlib.sha256(_canon_prompt(base).encode("utf-8")).hexdigest()[:16]
     # 변형 넷을 대결로 재 봤지만 **아무것도 기본에 안 넣었다.** 개별로 이긴
     # 둘(v2 75% · v4 67%)을 합쳐 검증 세트로 다시 붙였더니 44%(7/16)로 졌다.
     # 생성 편차가 커서 조건당 한 판으로는 못 가른다 — script_gen 의 기록 참조.
-    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "c0274042ddce636c")
+    # 해시는 **경로를 지우고** 잰다 — 안 그러면 새로 클론한 사람 PC 에서
+    # 무조건 실패한다(프롬프트에 절대경로가 박힌다).
+    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "71eab3d01d87d40b")
     eq("기본에 들어간 변형이 없다", sg._SHIPPED, ())
     for _k in ("누가 말하는지 알게 해라", "대사를 잘게 끊어라"):
         check("실험 조항이 기본에 안 섞였다: %s" % _k, _k not in base)
