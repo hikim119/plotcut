@@ -414,6 +414,7 @@ def dialogue_tests():
 
     tail_tests()
     foreign_span_tests()
+    duel_tests()
     width_tests()
     nardur_tests()
 
@@ -460,6 +461,34 @@ def width_tests():
     d3 = _read("#1-3")
     check("경계 바로 위(3큐)도 잡는다",
           any("상한" in w for w in d3["warnings"]), str(d3["warnings"]))
+
+
+def duel_tests():
+    """대결 하네스 — 자리 편향을 이름으로 되돌리는가. **자산 없이 돈다.**
+
+    자기 검사에서 드러난 것: 심사자는 우열을 못 가르면 **전원 1번을 찍는다**
+    (같은 대본을 양쪽에 놓자 9표 전원 1번, 이유도 전부 "차이가 없어 임의로").
+    순서를 뒤집어 두 번 돌리면 상쇄되지만, 한쪽이 죽으면 그 관점의 표가
+    1번 자리에 있던 쪽에 통째로 얹힌다.
+    """
+    import bench
+    print()
+    print("[22] 대결 하네스")
+    lens_orders = [("hook", "ab"), ("hook", "ba"), ("flow", "ab"),
+                   ("fun", "ab"), ("fun", "ba"), ("ending", "ab"),
+                   ("ending", "ba"), ("gut", "ab"), ("gut", "ba")]
+    # 전원 "1번" — 자기 검사 실제 데이터. flow 는 ba 가 API 오류로 죽었다.
+    votes = [{"a": "X", "b": "Y", "lens": l,
+              "order": "X" if o == "ab" else "Y", "pick": "1"}
+             for l, o in lens_orders]
+    t = bench.tally(votes)
+    eq("짝 안 맞는 관점을 버린다", t["total"].get("X"), 8)
+    eq("전원 1번이어도 순서 반전이 상쇄한다", t["rate"]["X"], 0.5)
+    eq("반대쪽도 같다", t["rate"]["Y"], 0.5)
+    # 진짜로 한쪽이 이기면 그건 잡아야 한다 (게이트가 과하게 열리지 않았는지)
+    won = [dict(v, pick=("1" if v["order"] == "X" else "2")) for v in votes]
+    t2 = bench.tally(won)
+    eq("X 가 실제로 이기면 100%", t2["rate"]["X"], 1.0)
 
 
 def foreign_span_tests():

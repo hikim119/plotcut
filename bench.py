@@ -249,7 +249,18 @@ def tally(votes):
 
     `order` 는 1번 자리에 놓인 쪽이다. `pick` 은 "1"/"2" 라 자리 기준이므로
     이름으로 되돌려야 한다.
+
+    **짝이 안 맞는 표는 버린다.** 자기 검사에서 드러났다 — 심사자는 우열을
+    못 가르면 **전원 1번을 찍는다**(같은 대본을 양쪽에 놓자 9표 전원 1번).
+    순서를 뒤집어 두 번 돌리면 그 쏠림이 상쇄되지만, 한쪽이 API 오류로 죽으면
+    그 관점은 1번 자리에 있던 쪽에 표를 통째로 얹는다. 실측: 죽은 표 하나가
+    50/50 을 55.6/44.4 로 밀었다.
     """
+    seen = {}
+    for v in votes:
+        seen.setdefault((v["a"], v["b"], v["lens"]), set()).add(v["order"])
+    votes = [v for v in votes
+             if len(seen[(v["a"], v["b"], v["lens"])]) == 2]
     win, tot, pos = {}, {}, {"1": 0, "2": 0}
     for v in votes:
         first = v["order"]
