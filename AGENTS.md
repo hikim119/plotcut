@@ -428,7 +428,7 @@ python cli.py check "<대본>.txt" --srt "<자막>.srt" [--movie "<영화>.mp4"]
 ```
 python cli.py build [<대본.txt>] --srt <자막.srt> [--movie <영화.mp4>] [--name <이름>]
 python cli.py script <자막.srt> [--seconds 180] [--extra "..."]
-python selftest.py   # 회귀 423건 — 코드를 고쳤으면 반드시
+python selftest.py   # 회귀 전부 — 코드를 고쳤으면 반드시
 ```
 
 - **대본을 생략하면** `script_gen.py` 가 로그인된 에이전트 CLI(`codex`/`claude`)를
@@ -455,7 +455,10 @@ python selftest.py   # 회귀 423건 — 코드를 고쳤으면 반드시
 
 ## 코드를 건드릴 때
 
-- **`python selftest.py` 를 반드시 돌린다** (423건).
+- **`python selftest.py` 를 반드시 돌린다** — 「전부 정상」이 나와야 한다.
+  **건수는 문서에 안 적는다.** 검사를 넣을 때마다 어긋나고, 실제로 하루에
+  세 번 틀렸다(79 → 209 → 423 → 451). 틀린 숫자는 「이 문서는 낡았다」는
+  신호만 준다.
   단 회귀 테스트는 `test/` 의 자막·영화가 있어야 돈다. 저작물이라 레포에 넣지 않았다.
 - **사용자의 실제 CapCut 폴더를 테스트로 건드리지 않는다.** 실험은 `--draft-root <임시폴더>`.
 - **테스트용 영화 파일은 수 GB다. 절대 열지 말 것**(ffprobe만).
