@@ -336,6 +336,11 @@ def parse_smi(text, prefer_class=None):
 
 # ── 통합 파싱 + 정리 ────────────────────────────────────────────────────────
 
+class SubtitleError(RuntimeError):
+    """자막을 읽을 수 없다 — 사람이 고칠 수 있는 상황이라 트레이스백 대신
+    `cli.main` 이 `✘` 한 줄로 보여 준다."""
+
+
 def parse_file(path, prefer_class=None, offset_s=0.0, fps_scale=1.0):
     """자막 파일 → 정리된 큐 목록 + 메타.
 
@@ -390,6 +395,16 @@ def parse_file(path, prefer_class=None, offset_s=0.0, fps_scale=1.0):
         "dropped": dropped,
         "offset_s": offset_s, "fps_scale": fps_scale,
     }
+    # 큐가 하나도 없으면 **여기서 막는다.** 자막이 아닌 파일이나 0바이트를
+    # 넣으면 예전엔 그대로 통과해 `cli.py:188` 의 `cues[0]` 에서
+    # `IndexError: list index out of range` 트레이스백이 났다(실측).
+    # 처음 쓰는 사람이 제일 흔히 하는 실수인데 제일 안 친절하게 죽었다.
+    # 큐 0개짜리 자막은 어느 경로에서도 쓸모가 없으므로 근본에서 거른다.
+    if not cues:
+        raise SubtitleError(
+            "자막을 한 줄도 읽지 못했습니다: %s" % p.name + chr(10)
+            + "  자막 파일이 맞는지, 비어 있지 않은지 확인하세요"
+              " (srt · smi · sami · vtt · ass · ssa).")
     return cues, meta
 
 

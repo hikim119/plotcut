@@ -7,7 +7,10 @@ selftest.py — 정답 샘플로 고정한 회귀 테스트.
 테스트 자료가 없으면(다른 PC) 조용히 건너뛴다.
 """
 
+import contextlib
 import inspect
+import io
+import tempfile
 import json
 import math
 import statistics
@@ -570,6 +573,42 @@ def clierr_tests():
     check("변형 기준점 실패도 GenError 다",
           issubclass(type(_grab(lambda: sg._insert_after(["x"], "없는것", ["y"]))),
                      sg.GenError))
+
+    # 처음 쓰는 사람이 제일 자주 하는 실수 넷. 전부 트레이스백이었다(실측).
+    import subtitle
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    (tmp / "empty.srt").write_text("", encoding="utf-8")
+    (tmp / "notsub.srt").write_text("이건 자막이 아닙니다", encoding="utf-8")
+    (tmp / "s.txt").write_text("제목" + chr(10) * 2 + "[00:00:01 ~ 00:00:05]"
+                               + chr(10) * 2 + "대사 한 줄" + chr(10), encoding="utf-8")
+    for label, argv in (
+            ("없는 자막", ["check", str(tmp / "s.txt"), "--srt", str(tmp / "없다.srt")]),
+            ("빈 자막", ["check", str(tmp / "s.txt"), "--srt", str(tmp / "empty.srt")]),
+            ("자막 아닌 파일", ["check", str(tmp / "s.txt"),
+                            "--srt", str(tmp / "notsub.srt")])):
+        b = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(b):
+                rc = cli.main(argv)
+        except Exception as e:                          # noqa: BLE001
+            check("%s — 트레이스백이 안 샌다" % label, False, type(e).__name__)
+            continue
+        eq("%s — 종료 코드 1" % label, rc, 1)
+        check("%s — `✘` 로 알려 준다" % label,
+              any(l.startswith("✘") for l in b.getvalue().splitlines()),
+              b.getvalue()[-120:])
+    shutil.rmtree(tmp, ignore_errors=True)
+    # 큐 0개는 **근본에서** 막는다 — 안 그러면 `cues[0]` 마다 방어해야 한다
+    check("빈 자막은 parse_file 이 거른다",
+          issubclass(type(_grab(lambda: subtitle.parse_file(
+              _write_tmp("")))), subtitle.SubtitleError))
+
+
+def _write_tmp(text, suffix=".srt"):
+    d = pathlib.Path(tempfile.mkdtemp())
+    p = d / ("x" + suffix)
+    p.write_text(text, encoding="utf-8")
+    return p
 
 
 def _grab(fn):

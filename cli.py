@@ -120,9 +120,20 @@ def main(argv=None):
         # 처럼 **사람이 고칠 수 있는 상황**인데 CLI 에서 파이썬 트레이스백이
         # 그대로 나갔다(실측). 메시지 자체는 친절한데 스택에 파묻혀 안 보인다.
         # GUI 는 `except Exception` 으로 잡아서 멀쩡했다 — CLI 만 새고 있었다.
+        import subtitle
         if isinstance(e, (guards.GuardError, script_io.ScriptError,
-                          layout.LayoutError, script_gen.GenError)):
+                          layout.LayoutError, script_gen.GenError,
+                          subtitle.SubtitleError)):
             print("\n✘ %s" % e)
+            return 1
+        # 경로를 잘못 적는 건 **처음 쓰는 사람이 제일 자주 하는 실수**인데
+        # 예전엔 `FileNotFoundError` 트레이스백이 그대로 나갔다(실측).
+        # 어느 파일인지만 알려 주면 스스로 고친다.
+        if isinstance(e, FileNotFoundError):
+            print("\n✘ 파일을 찾을 수 없습니다: %s" % (e.filename or e))
+            return 1
+        if isinstance(e, UnicodeDecodeError):
+            print("\n✘ 파일 인코딩을 읽지 못했습니다 — UTF-8 로 저장해 보세요.")
             return 1
         raise
 
