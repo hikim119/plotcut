@@ -456,6 +456,23 @@ def run_build(script_path, srt_path, movie_path=None, project_name=None,
         # 만들어 둔 폴더를 지운다(락이 풀린 뒤라야 지워진다).
         _discard_dir(rdir)
         raise
+    except Exception:                                       # noqa: BLE001
+        # [5] CapCut 조립이나 [1] 영화 읽기에서 죽으면 **[3]까지의 산출물이
+        # 폴더에 남는다**(대본 사본·narration.txt). 그런데 `state.json` 이
+        # 없어서 `cli.py list` 에 안 뜬다 — 쓸 만한 결과가 **찾을 수 없는
+        # 자리에** 쌓인다. 완전히 빈 폴더면 치우고, 뭔가 남았으면 어디인지
+        # 알려 준다. 실패 자체는 그대로 올려 보낸다.
+        try:
+            if rdir is not None:
+                left = [f.name for f in Path(rdir).iterdir()]
+                if not left:
+                    shutil.rmtree(rdir, ignore_errors=True)
+                else:
+                    log("\n  만들다 만 결과가 남아 있습니다: %s" % rdir)
+                    log("  (%s)" % " · ".join(sorted(left)[:4]))
+        except OSError:
+            pass
+        raise
 
 
 # ── state ──────────────────────────────────────────────────────────────────

@@ -419,6 +419,7 @@ def dialogue_tests():
     foreign_span_tests()
     variant_tests()
     clierr_tests()
+    usererr_tests()
     launcher_tests()
     width_error_tests()
     duel_tests()
@@ -713,6 +714,48 @@ def foreign_span_tests():
              + "%s %s" % (sio.fmt_span(c["start_s"], c["end_s"]), line) + chr(10))
         eq("%s — 그 구간의 언어로 판정한다" % label,
            sio.read(t, mix, log=lambda *_: None)["stats"]["time_mismatch"], want)
+
+
+def usererr_tests():
+    """CLI 가 **프로젝트가 정의한 예외를 하나도 안 빠뜨리는가.** 자산 없이 돈다.
+
+    같은 버그를 **세 번 연속으로** 냈다 — `GenError` · `SubtitleError` ·
+    `ProbeError`/`DraftError`. 화이트리스트에 이름을 하나씩 적어 두는 방식이라
+    새 예외를 만들 때마다 잊었고, 그때마다 트레이스백이 그대로 나갔다.
+    GUI 는 `except Exception` 이라 멀쩡해서 **CLI 만 샜다.**
+
+    그래서 `cli.user_errors()` 가 모듈에서 긁어모으게 바꿨다. 이 검사는
+    **모듈 목록 자체가 빠지지 않았는지**를 본다 — 새 모듈이 예외를 정의하면
+    여기서 걸린다.
+    """
+    import importlib
+    import inspect
+    import cli
+    print()
+    print("[27] CLI 가 잡는 예외")
+    caught = cli.user_errors()
+    check("긁어모아서 만든다 (이름을 안 적는다)",
+          "user_errors" in inspect.getsource(cli.main), "cli.main")
+    # 저장소 전체에서 예외를 정의한 모듈을 찾아, 하나라도 빠지면 실패한다.
+    missing = []
+    for py in sorted(ROOT.glob("*.py")):
+        if py.stem in ("selftest", "create_icon", "cli", "bench"):
+            continue
+        try:
+            mod = importlib.import_module(py.stem)
+        except Exception:                                   # noqa: BLE001
+            continue
+        for name, c in vars(mod).items():
+            if (inspect.isclass(c) and issubclass(c, Exception)
+                    and c.__module__ == py.stem and c not in caught):
+                # `pipeline.Stopped` 는 취소지 실패가 아니다 — 따로 처리한다.
+                if (py.stem, name) == ("pipeline", "Stopped"):
+                    continue
+                missing.append("%s.%s" % (py.stem, name))
+    check("빠진 예외가 없다", not missing, "빠짐: %s" % missing)
+    for want in ("ProbeError", "DraftError", "SubtitleError", "GenError"):
+        check("%s 를 잡는다" % want,
+              any(c.__name__ == want for c in caught))
 
 
 def launcher_tests():

@@ -50,6 +50,33 @@ def _utf8():
             s.reconfigure(encoding="utf-8", errors="replace")
 
 
+# 이 모듈들이 정의한 예외는 **전부** 「사람이 고칠 수 있는 상황」이다.
+# 자막을 못 읽는다 · 에이전트가 안 깔렸다 · ffmpeg 가 없다 · CapCut 이 없다 ·
+# CapCut 이 그 프로젝트를 열고 있다 — 메시지 자체는 이미 친절한데, 예전엔
+# 화이트리스트에 이름을 하나씩 적어 두는 방식이라 **세 번 연속으로 빠뜨렸다**
+# (GenError · SubtitleError · ProbeError/DraftError). 그때마다 트레이스백이
+# 그대로 나갔고 GUI 는 `except Exception` 이라 멀쩡해서 CLI 만 샜다.
+#
+# 그래서 **이름을 안 적는다.** 모듈에서 긁어모은다. 새 예외를 만들어도 자동으로
+# 포함되고, 여기 없는 모듈을 새로 만들면 selftest [27] 이 걸린다.
+_ERR_MODULES = ("guards", "script_io", "layout", "script_gen", "subtitle",
+                "movie_info", "capcut_draft")
+
+
+def user_errors():
+    """사람이 고칠 수 있는 실패들 — `✘` 한 줄로 보여 줄 예외 튜플."""
+    import importlib
+    import inspect
+    out = []
+    for name in _ERR_MODULES:
+        mod = importlib.import_module(name)
+        for c in vars(mod).values():
+            if (inspect.isclass(c) and issubclass(c, Exception)
+                    and c.__module__ == name):
+                out.append(c)
+    return tuple(out)
+
+
 def main(argv=None):
     _utf8()
     ap = argparse.ArgumentParser(prog="plotcut")
@@ -112,18 +139,7 @@ def main(argv=None):
         print("\n⛔ 중단되었습니다.")
         return 130
     except Exception as e:                                  # noqa: BLE001
-        import guards
-        import script_gen
-        import script_io
-        import layout
-        # `GenError` 가 빠져 있었다. 「에이전트가 안 깔렸다」 「자막을 못 읽는다」
-        # 처럼 **사람이 고칠 수 있는 상황**인데 CLI 에서 파이썬 트레이스백이
-        # 그대로 나갔다(실측). 메시지 자체는 친절한데 스택에 파묻혀 안 보인다.
-        # GUI 는 `except Exception` 으로 잡아서 멀쩡했다 — CLI 만 새고 있었다.
-        import subtitle
-        if isinstance(e, (guards.GuardError, script_io.ScriptError,
-                          layout.LayoutError, script_gen.GenError,
-                          subtitle.SubtitleError)):
+        if isinstance(e, user_errors()):
             print("\n✘ %s" % e)
             return 1
         # 경로를 잘못 적는 건 **처음 쓰는 사람이 제일 자주 하는 실수**인데
