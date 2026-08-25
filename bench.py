@@ -214,10 +214,18 @@ def cmd_pack(a):
         if not spec["human"]:
             continue
         p = outdir / ("human_%s.txt" % film)
-        if not p.exists():
+        if p.exists():
+            continue
+        # 완성본이 없는 PC 도 있다. 예전엔 여기서 `FileNotFoundError` 로 죽어
+        # **도구 대본까지 못 굽었다** — 실측: 대본예시 없는 클론에서 크래시.
+        # 눈금 대결만 못 할 뿐 변형 대결은 도구끼리라 굽는 게 맞다.
+        try:
             seq = pack_human(film)
-            p.write_text(render(seq), encoding="utf-8")
-            made.append(("human_%s" % film, len(seq)))
+        except (OSError, KeyError) as e:
+            print("  human_%s 건너뜀 — %s" % (film, type(e).__name__))
+            continue
+        p.write_text(render(seq), encoding="utf-8")
+        made.append(("human_%s" % film, len(seq)))
     for name, n in made:
         print("  %-30s %d줄" % (name, n))
     print("%d개 · %s" % (len(made), outdir))
