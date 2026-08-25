@@ -304,7 +304,15 @@ def _pool(cues, win):
     return [c for c in cues if c["start_s"] < b + TOL and c["end_s"] > a - TOL]
 
 
-def _verify_span(it, cues, eps=0.05):
+def _srt_korean(cues):
+    """자막이 한국어인가. `_verify_span` 의 텍스트 대조를 켤지 정한다."""
+    if not cues:
+        return True
+    import subtitle
+    return subtitle.is_korean(cues)
+
+
+def _verify_span(it, cues, eps=0.05, check_text=True):
     """`@시각` 이 박힌 대사를 자막과 **다시** 대조한다. 자막이 있을 때만 부른다.
 
     `_match_all` 은 span 이 있으면 자막을 안 본다 — 그게 이 형식의 목적이다
@@ -313,7 +321,15 @@ def _verify_span(it, cues, eps=0.05):
     경고 0 으로 통과했다**(실측). 그 구멍을 여기서 막는다.
 
     오탐 위험을 먼저 쟀다: 실제 대본 5편 291개 span 을 이 방식으로 대조했더니
-    **전수 유사도 1.000** 이었다.
+    **전수 유사도 1.000** 이었다. 그런데 그 5편은 **전부 한국어 자막**이었다 —
+    한 방향만 재고 "오탐 없음"이라고 적은 것이다. 자막이 외국어면 대본은
+    한국어로 갈아끼운 번역이라 **원문과 글자가 하나도 안 겹친다.** 실측:
+    father/robber/gentleman 을 처음 돌리자 대사 줄마다 하나씩 132건이 떴고,
+    셋 다 ✘ 로 실패했다. 게다가 이건 **생성 중에 에이전트가 보는 검사**라
+    (프롬프트가 ✘ 를 5회까지 고치라고 시킨다) 멀쩡한 번역을 되돌리게 만든다.
+
+    그래서 `check_text` 로 **텍스트 대조만** 끈다. "그 시각에 자막이 하나도
+    없다"(`없음`)는 언어와 무관하게 시각이 틀렸다는 뜻이므로 계속 본다.
 
     결과는 **새 키**(`span_cues` / `span_ratio`)에만 담는다. `it["cues"]` 를
     채우면 layout 이 조용히 달라진다 — 자막 노출이 PRE 만큼 밀리고, 되감기
@@ -327,6 +343,9 @@ def _verify_span(it, cues, eps=0.05):
     if not inside:
         it["span_ratio"] = 0.0
         return "없음"
+    if not check_text:
+        it["span_ratio"] = 1.0
+        return None
     want = sig(" ".join(" ".join(c["lines"]) for c in inside))
     got = sig(it["text"])
     if not want or not got:
@@ -342,10 +361,11 @@ def audit_spans(doc, cues):
     out = []
     if not cues:
         return out
+    ko = _srt_korean(cues)
     for bi, it in items(doc):
         if it["kind"] != "dialogue" or not it.get("span") or it.get("cue_ref"):
             continue
-        why = _verify_span(it, cues)
+        why = _verify_span(it, cues, check_text=ko)
         if why:
             out.append((bi, it, why))
     return out
@@ -418,7 +438,7 @@ def _match_all(blocks, cues, warnings, log):
                 it["note"] = "시각"
                 stats["by_time"] += 1
                 if cues:
-                    why = _verify_span(it, cues)
+                    why = _verify_span(it, cues, check_text=_srt_korean(cues))
                     if why == "없음":
                         stats["time_nocue"] += 1
                         warnings.append(

@@ -413,6 +413,7 @@ def dialogue_tests():
         check("§10 에 '%s'" % _k, _k in _st)
 
     tail_tests()
+    foreign_span_tests()
     width_tests()
     nardur_tests()
 
@@ -459,6 +460,50 @@ def width_tests():
     d3 = _read("#1-3")
     check("경계 바로 위(3큐)도 잡는다",
           any("상한" in w for w in d3["warnings"]), str(d3["warnings"]))
+
+
+def foreign_span_tests():
+    """외국어 자막 + `@시각` frozen 대본. **자산 없이 돈다.**
+
+    번역 대본은 한국어고 자막은 영어라 글자가 하나도 안 겹친다. 예전엔
+    `_verify_span` 이 그걸 「대사가 다르다」로 읽어 **대사 줄마다 하나씩**
+    경고를 냈다 — 실측 father 61 · robber 37 · gentleman 34, 셋 다 ✘ 로 실패.
+    독스트링은 「291개 span 전수 유사도 1.000, 오탐 없음」이라고 적혀 있었지만
+    그 291개는 **전부 한국어 자막**이었다. 한 방향만 잰 것이다.
+    """
+    import script_io as sio
+    print()
+    print("[21] 외국어 자막 + `@시각`")
+    ko_cues, en_cues, ko_txt, en_txt = [], [], [], []
+    for i in range(1, 7):
+        a, b = 10.0 + i * 5, 12.5 + i * 5
+        en = "English line number %d here" % i
+        kr = "한국어로 바꾼 대사 %d" % i
+        base = {"idx": i, "src_no": i, "start_s": a, "end_s": b}
+        en_cues.append(dict(base, text=en, lines=[en]))
+        ko_cues.append(dict(base, text=kr, lines=[kr]))
+        span = sio.fmt_span(a - 0.2, b + 0.2)
+        en_txt.append("%s %s" % (span, kr))
+        ko_txt.append("%s %s" % (span, kr))
+    head = "제목" + chr(10) * 2 + "[00:00:10 ~ 00:00:45]" + chr(10) * 2
+    body = (chr(10) * 2).join(en_txt) + chr(10)
+
+    d = sio.read(head + body, en_cues, log=lambda *_: None)
+    eq("영어 자막 — 번역이 어긋남으로 안 잡힌다", d["stats"]["time_mismatch"], 0)
+    eq("영어 자막 — 경고 0 (오탐 없음)", len(d["warnings"]), 0)
+    eq("그래도 대조는 돌았다", d["stats"]["time_ok"], d["stats"]["by_time"])
+
+    # 텍스트 대조만 끈 것이다. **시각이 틀린 건 언어와 무관하게 잡아야 한다.**
+    far = body.replace(en_txt[0], sio.fmt_span(9000.0, 9002.0) + " 한국어로 바꾼 대사 1")
+    d2 = sio.read(head + far, en_cues, log=lambda *_: None)
+    eq("자막 없는 시각은 여전히 잡는다", d2["stats"]["time_nocue"], 1)
+
+    # 한국어 자막에서는 예전처럼 지어낸 대사를 잡아야 한다 (게이트가 과하게
+    # 열리지 않았는지)
+    d3 = sio.read(head + body.replace(ko_txt[0], ko_txt[0].split(" ", 1)[0]
+                                      + " 완전히 지어낸 대사입니다", 1),
+                  ko_cues, log=lambda *_: None)
+    eq("한국어 자막 — 지어낸 대사는 잡는다", d3["stats"]["time_mismatch"], 1)
 
 
 def nardur_tests():
