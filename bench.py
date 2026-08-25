@@ -5,7 +5,7 @@
 지표는 목표가 아니라 **관문**이다 — 이미 대본 두 개가 다 경고 0건이라 안 갈린다.
 
   python bench.py gen  --tag base1 --films father,robber --runs 1
-  python bench.py gate --tag base1
+  python bench.py gen  --tag v1 --films father,robber --variant v1_reaction
   python bench.py pack --tag base1
 
 **`--out` 을 절대 쓰지 않는다.** `pipeline.py:289` 가 `out` 이 있으면 `rdir=None`
@@ -46,17 +46,19 @@ JOBS = 2      # 에이전트 CLI 가 무겁고 둘 다 같은 트리에 쓰기 �
 
 # ── 배치 생성 ───────────────────────────────────────────────────────────────
 
-def _run_one(tag, film, i, extra, out):
+def _run_one(tag, film, i, extra, variant, out):
     import pipeline
     name = "bench_%s_%s_%d" % (tag, film, i)
     spec = FILMS[film]
     logs = []
     t0 = time.time()
-    rec = {"tag": tag, "film": film, "run": i, "name": name, "extra": extra}
+    rec = {"tag": tag, "film": film, "run": i, "name": name,
+           "extra": extra, "variant": variant}
     try:
         r = pipeline.run_script(str(spec["srt"]), out=None, project_name=name,
                                 target_s=spec["seconds"], extra=extra,
-                                movie_title=spec["title"], log=logs.append)
+                                movie_title=spec["title"], variant=variant,
+                                log=logs.append)
         rec["script"] = str(r["script_path"])
         rec["ok"] = True
     except Exception as e:                                   # noqa: BLE001
@@ -78,14 +80,15 @@ def cmd_gen(a):
         if f not in FILMS:
             sys.exit("모르는 영화: %s (%s)" % (f, ", ".join(FILMS)))
     jobs = [(f, i) for f in films for i in range(1, a.runs + 1)]
-    print("배치 %s — %d회 (영화 %d × %d회), 동시 %d개"
-          % (a.tag, len(jobs), len(films), a.runs, a.jobs))
+    print("배치 %s — %d회 (영화 %d × %d회), 동시 %d개, 변형 %s"
+          % (a.tag, len(jobs), len(films), a.runs, a.jobs,
+             a.variant or "없음(기본)"))
     out, sem, lock = [], threading.Semaphore(a.jobs), threading.Lock()
 
     def worker(film, i):
         with sem:
             local = []
-            _run_one(a.tag, film, i, a.extra, local)
+            _run_one(a.tag, film, i, a.extra, a.variant, local)
             with lock:
                 out.extend(local)
 
@@ -140,9 +143,13 @@ def pack_human(film):
     가능하다 — 완성본 자막 자체에는 표시가 없다.
 
     다만 **문장 그대로는 안 맞는다.** 화면에서 나레이션은 조각으로 쪼개져
-    여러 큐에 걸쳐 있다(`갑작스런 비보를` / `받게 된 할`). 그래서 정답 문장을
-    `wrap.split_narration` 으로 같은 조각을 내서 **연속 큐와 이어 맞춘다.**
-    안 그러면 father 11개 중 6개, robber 10개 중 1개만 잡힌다 — 실측.
+    여러 큐에 걸쳐 있다(`갑작스런 비보를` / `받게 된 할`). 문장으로 대조하면
+    father 11개 중 6개, robber 10개 중 1개만 잡힌다 — 실측.
+
+    `wrap.split_narration` 으로 같은 조각을 내서 맞춰도 안 된다. 유저분이 손으로
+    나눈 자리와 어긋나는 문장이 남는다(father 1 · gentleman 2 · robber 3 누락).
+    그래서 **분할 방식에 안 기댄다** — 연속 큐를 이어 붙여 정답 문장이 되면
+    나레이션이다. 그러면 11/11 · 12/12 · 10/10 전부 잡힌다.
     """
     import subtitle
     gold = json.loads((ROOT / "fixtures" / "narration_gold.json")
@@ -201,7 +208,7 @@ def cmd_pack(a):
 # 심사자는 두 대본을 전문으로 읽고 「어느 쪽 숏츠를 더 보고 싶은가」를 고른다.
 # **순서를 반드시 뒤집어 두 번 돌린다** — 위치 편향은 LLM 심사의 고질이고,
 # 안 잡으면 승률이 통째로 왜곡된다. 같은 대본을 자기 자신과 붙였을 때 50%가
-# 나오는지가 그 검사다 (`bench.py self` ).
+# 나오는지가 그 검사다 — selftest [22] 가 그 결과를 회귀로 들고 있다.
 
 LENSES = {
     "hook":   "특히 **첫 30초**를 봐라 — 계속 보게 만드는가, 아니면 설명부터 시작하는가.",
@@ -282,6 +289,8 @@ def main(argv=None):
     p.add_argument("--films", default="father,robber,gentleman")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--extra", default="")
+    p.add_argument("--variant", default=None,
+                   help="script_gen.VARIANTS 의 키. 생략하면 기본 프롬프트")
     p.add_argument("--jobs", type=int, default=JOBS)
     p = sub.add_parser("pack", help="대결용 중립 형식으로 굽는다")
     p.add_argument("--tag", required=True)

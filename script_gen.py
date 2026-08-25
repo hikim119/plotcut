@@ -202,8 +202,74 @@ def _looks_read_only(out):
     return any(k in low for k in _NO_WRITE)
 
 
+# ── 프롬프트 변형 (A/B 실험용) ──────────────────────────────────────────────
+# `bench.py` 가 같은 영화로 기준선과 변형을 뽑아 **블라인드 쌍대 비교**로
+# 승률을 잰다. 자동 지표는 목표가 아니라 관문이다 — 기준선 두 판의 편차가
+# 블록 ±1 · 대사 ±4 · 명사끝 **±15%p** 라 지표만으로는 못 가른다.
+#
+# `variant=None` 이면 아래 코드가 한 줄도 안 돈다. 기본 프롬프트는 **바이트
+# 단위로 안 변한다** — selftest 가 해시로 못 박는다.
+
+def _insert_after(lines, needle, add):
+    for i, ln in enumerate(lines):
+        if needle in ln:
+            return lines[:i + 1] + list(add) + lines[i + 1:]
+    raise ValueError("변형 기준점을 못 찾았다: %r" % needle)
+
+
+def _drop_containing(lines, needle):
+    out = [ln for ln in lines if needle not in ln]
+    if len(out) == len(lines):
+        raise ValueError("지울 줄을 못 찾았다: %r" % needle)
+    return out
+
+
+def _v_reaction(lines):
+    """정보를 날라야 하는 대목이 설명조가 된다.
+
+    근거: 판별 시험에서 심사자 4명 이상이 잡아낸 도구 문장 6개가 **전부
+    편지·티켓 줄거리 설명**이었다. 유일하게 재현성 있는 약점이다.
+    """
+    return _insert_after(lines, "· **설명하지 말고 반응을 적어라.**", [
+        "     **정보를 날라야 하는 대목도 반응으로 쓴다.** 물건·장치·설정을",
+        "     소개할 때가 제일 무너진다. `편지 안에는 열쇠가 있었고` 는 설명이고,",
+        "     `열쇠를 손에 넣자 눈이 돌아갔고` 는 대본이다. 무엇이 있었는지가",
+        "     아니라 **그걸 본 인물이 어떻게 됐는지**로 적어라.",
+    ])
+
+
+def _v_dense(lines):
+    """대사를 잘게 끊는다.
+
+    근거: 같은 목표 길이인데 잘 나간 3편은 대사 문단을 **두 배로** 썼다.
+    실측 유저분 111/58/77 vs 도구 61/34/37. 기준선 편차(±4)의 12배가 넘는다.
+    """
+    return _insert_after(lines, "· **나레이션을 아껴라.", [
+        "   · **대사를 잘게 끊어라.** 실측: 잘 나간 3편은 같은 길이에 대사 문단을",
+        "     **두 배로** 썼다(111·58·77개). 한 문단에 여러 문장을 몰아넣지 말고",
+        "     자막 큐 하나에 한 문단으로 나눠라 — 컷이 빨라야 안 지루하다.",
+        "     장면 수를 늘리라는 게 아니다. **고른 장면 안에서 더 많이 인용해라.**",
+    ])
+
+
+def _v_nostyle(lines):
+    """`style_example.txt` 를 가리키는 줄을 뺀다 (ablation).
+
+    프롬프트의 61%가 이 파일을 가리킨다. **얼마나 지고 있는지** 모르면
+    나머지 튜닝이 헛돈다. `--extra` 로는 못 만드는 변형이다(추가만 된다).
+    """
+    return _drop_containing(lines, "이게 문체의 정답이다")
+
+
+VARIANTS = {
+    "v1_reaction": _v_reaction,
+    "v2_dense": _v_dense,
+    "v3_nostyle": _v_nostyle,
+}
+
+
 def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
-                 plot_path=None):
+                 plot_path=None, variant=None):
     srt_path = Path(srt_path).resolve()
     out_path = Path(out_path).resolve()
     movie_title = (movie_title or "").strip()
@@ -375,6 +441,13 @@ def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
             "**거의 다** 옮겼고(한국어 큐 ÷ 원본 큐 중앙 1.00), 10큐 넘는 장면은",
             "**중앙 0.61**까지 줄였다(최소 0.12). **긴 장면일수록 더 버린다.**",
         ]
+    # 변형은 `extra` 앞에 건다 — `추가 지시(최우선)` 는 언제나 맨 끝이어야
+    # 사람이 준 지시가 제일 세게 걸린다.
+    if variant:
+        if variant not in VARIANTS:
+            raise GenError("모르는 프롬프트 변형: %s (%s)"
+                           % (variant, ", ".join(VARIANTS)))
+        lines = VARIANTS[variant](lines)
     if extra.strip():
         lines += ["", "추가 지시(최우선): " + extra.strip()]
     return "\n".join(lines)
@@ -563,7 +636,8 @@ def _inside_workdir(path):
 
 def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
              prefer=None,
-             work_dir=None, timeout=1800, log=print, stop=None, progress=None):
+             work_dir=None, timeout=1800, log=print, stop=None, progress=None,
+             variant=None):
     """에이전트를 돌려 대본 txt를 만든다. 반환: Path(out_path)."""
     found = find_runner(prefer)
     if not found:
@@ -636,7 +710,7 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
 
     with open(ptxt, "w", encoding="utf-8", newline="\n") as f:
         f.write(build_prompt(sub_for_agent, staged, target_s, extra, movie_title,
-                             plot_path=staged_plot))
+                             plot_path=staged_plot, variant=variant))
     prompt = ('"%s" 파일을 읽고, 거기 적힌 지시를 그대로 순서대로 수행해라.' % ptxt)
 
     log("  %s 로 대본을 만듭니다 — 몇 분 걸립니다" % spec["label"])

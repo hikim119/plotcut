@@ -414,6 +414,7 @@ def dialogue_tests():
 
     tail_tests()
     foreign_span_tests()
+    variant_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -461,6 +462,40 @@ def width_tests():
     d3 = _read("#1-3")
     check("경계 바로 위(3큐)도 잡는다",
           any("상한" in w for w in d3["warnings"]), str(d3["warnings"]))
+
+
+def variant_tests():
+    """프롬프트 변형 — **기본값은 한 글자도 안 변한다.** 자산 없이 돈다.
+
+    A/B 실험 때문에 `build_prompt` 에 `variant` 를 붙였다. 변형을 만지다
+    기본 프롬프트를 건드리면 **그동안 쌓은 실측이 전부 무효**가 된다.
+    그래서 해시로 못 박는다. 프롬프트를 일부러 고쳤으면 이 값도 같이 고쳐라 —
+    그때는 지금까지의 승률·편차 측정이 그 시점에서 끊긴다는 뜻이다.
+    """
+    import hashlib
+    import script_gen as sg
+    print()
+    print("[23] 프롬프트 변형")
+    base = sg.build_prompt("x.srt", "o.txt", 180)
+    got = hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "c0274042ddce636c")
+    check("변형을 안 주면 변형 코드가 안 돈다", sg.build_prompt(
+        "x.srt", "o.txt", 180, variant=None) == base)
+    for v in sg.VARIANTS:
+        t = sg.build_prompt("x.srt", "o.txt", 180, variant=v)
+        check("변형 %s 가 실제로 프롬프트를 바꾼다" % v, t != base and len(t) != len(base))
+    # 기준점을 못 찾으면 **조용히 아무것도 안 하면 안 된다** — 프롬프트 문구가
+    # 바뀌었는데 변형이 안 걸린 채로 실험이 돌면 결과가 통째로 거짓이 된다.
+    try:
+        sg._insert_after(["아무 줄"], "없는 기준점", ["x"])
+        check("기준점을 못 찾으면 터진다", False, "안 터졌다")
+    except ValueError:
+        check("기준점을 못 찾으면 터진다", True)
+    try:
+        sg.build_prompt("x.srt", "o.txt", 180, variant="없는변형")
+        check("모르는 변형이면 터진다", False, "안 터졌다")
+    except sg.GenError:
+        check("모르는 변형이면 터진다", True)
 
 
 def duel_tests():
