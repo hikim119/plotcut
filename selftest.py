@@ -419,6 +419,7 @@ def dialogue_tests():
     foreign_span_tests()
     variant_tests()
     clierr_tests()
+    launcher_tests()
     width_error_tests()
     duel_tests()
     width_tests()
@@ -712,6 +713,29 @@ def foreign_span_tests():
              + "%s %s" % (sio.fmt_span(c["start_s"], c["end_s"]), line) + chr(10))
         eq("%s — 그 구간의 언어로 판정한다" % label,
            sio.read(t, mix, log=lambda *_: None)["stats"]["time_mismatch"], want)
+
+
+def launcher_tests():
+    """런처가 **조용히 죽지 않는가.** 자산 없이 돈다.
+
+    바탕화면 바로가기는 `run.vbs` → `pythonw gui.py` 를 **창 숨김**으로 띄운다.
+    예전엔 확인이 하나도 없어서, 시작에서 죽으면 더블클릭해도 **아무 일도
+    안 일어났다** — 오류창도 콘솔도 없다. `run.bat` 에는 확인이 있는데
+    바로가기는 `run.bat` 을 안 쓴다.
+    """
+    print()
+    print("[26] 런처")
+    vbs = (ROOT / "run.vbs").read_bytes()
+    # WSH 는 .vbs 를 시스템 코드페이지로 읽는다. UTF-8 한글을 넣으면 대화창이
+    # 깨진다(cscript 로 확인). 다른 런처가 전부 ASCII 인 것도 같은 이유다.
+    bad = [x for x in vbs if x > 127]
+    check("run.vbs 가 순수 ASCII 다", not bad, "비ASCII %d바이트" % len(bad))
+    txt = vbs.decode("ascii", "replace")
+    check("띄우기 전에 확인한다", "python -c" in txt and "rc <> 0" in txt)
+    check("실패하면 알려 준다", "MsgBox" in txt and "setup.bat" in txt)
+    for f in ("setup.bat", "run.bat", "create_shortcut.ps1"):
+        b = (ROOT / f).read_bytes()
+        check("%s 도 ASCII 다" % f, not [x for x in b if x > 127])
 
 
 def width_error_tests():
