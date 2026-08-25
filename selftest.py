@@ -415,6 +415,7 @@ def dialogue_tests():
     tail_tests()
     foreign_span_tests()
     variant_tests()
+    clierr_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -495,13 +496,58 @@ def variant_tests():
     try:
         sg._insert_after(["아무 줄"], "없는 기준점", ["x"])
         check("기준점을 못 찾으면 터진다", False, "안 터졌다")
-    except ValueError:
-        check("기준점을 못 찾으면 터진다", True)
+    except sg.GenError:
+        # `ValueError` 가 아니라 `GenError` 다 — `cli.main` 이 분류할 수 있어야
+        # 파이썬 트레이스백 대신 `✘` 한 줄로 나간다 ([24] 참조).
+        check("기준점을 못 찾으면 GenError 로 터진다", True)
     try:
         sg.build_prompt("x.srt", "o.txt", 180, variant="없는변형")
         check("모르는 변형이면 터진다", False, "안 터졌다")
     except sg.GenError:
         check("모르는 변형이면 터진다", True)
+
+
+def clierr_tests():
+    """CLI 가 **사람이 고칠 수 있는 실패**를 트레이스백 없이 보여 주는가.
+
+    `GenError` 가 분류 목록에서 빠져 있었다. 「에이전트가 안 깔렸다」
+    「자막을 못 읽는다」 같은 상황인데 CLI 에서 파이썬 스택이 그대로 나갔다
+    (실측). 메시지 자체는 친절한데 스택에 파묻혀 안 보인다. GUI 는
+    `except Exception` 으로 잡아서 멀쩡했다 — **CLI 만 새고 있었다.**
+    """
+    import io
+    import contextlib
+    import cli
+    import script_gen as sg
+    print()
+    print("[24] CLI 오류 표시")
+    _was = sg.find_runner
+    buf = io.StringIO()
+    try:
+        sg.find_runner = lambda prefer=None: None       # 에이전트가 없는 척
+        with contextlib.redirect_stdout(buf):
+            rc = cli.main(["script", str(TEST / "없는자막.srt")])
+    except Exception as e:                              # noqa: BLE001
+        check("에이전트 없음이 트레이스백으로 안 샌다", False, repr(e))
+        rc = None
+    finally:
+        sg.find_runner = _was
+    out = buf.getvalue()
+    eq("종료 코드 1", rc, 1)
+    check("`✘` 로 시작하는 줄이 있다", "✘" in out, out[-200:])
+    check("Traceback 이 안 보인다", "Traceback" not in out, out[-200:])
+    # 변형 기준점이 사라져도 같은 길로 나가야 한다 (실험 중에 실제로 난다)
+    check("변형 기준점 실패도 GenError 다",
+          issubclass(type(_grab(lambda: sg._insert_after(["x"], "없는것", ["y"]))),
+                     sg.GenError))
+
+
+def _grab(fn):
+    try:
+        fn()
+    except Exception as e:                              # noqa: BLE001
+        return e
+    return None
 
 
 def duel_tests():

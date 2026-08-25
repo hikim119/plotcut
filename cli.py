@@ -113,10 +113,15 @@ def main(argv=None):
         return 130
     except Exception as e:                                  # noqa: BLE001
         import guards
+        import script_gen
         import script_io
         import layout
+        # `GenError` 가 빠져 있었다. 「에이전트가 안 깔렸다」 「자막을 못 읽는다」
+        # 처럼 **사람이 고칠 수 있는 상황**인데 CLI 에서 파이썬 트레이스백이
+        # 그대로 나갔다(실측). 메시지 자체는 친절한데 스택에 파묻혀 안 보인다.
+        # GUI 는 `except Exception` 으로 잡아서 멀쩡했다 — CLI 만 새고 있었다.
         if isinstance(e, (guards.GuardError, script_io.ScriptError,
-                          layout.LayoutError)):
+                          layout.LayoutError, script_gen.GenError)):
             print("\n✘ %s" % e)
             return 1
         raise

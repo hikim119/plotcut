@@ -214,13 +214,17 @@ def _insert_after(lines, needle, add):
     for i, ln in enumerate(lines):
         if needle in ln:
             return lines[:i + 1] + list(add) + lines[i + 1:]
-    raise ValueError("변형 기준점을 못 찾았다: %r" % needle)
+    # `GenError` 로 던진다 — `ValueError` 면 `cli.main` 이 분류를 못 해
+    # 파이썬 트레이스백이 그대로 나간다. 프롬프트 문구를 고치면 기준점이
+    # 사라지므로 **실험 도중에 실제로 난다.**
+    raise GenError("변형 기준점을 못 찾았다: %r — 프롬프트 문구가 바뀌었다면 "
+                   "`script_gen` 의 변형 함수도 같이 고쳐라." % needle)
 
 
 def _drop_containing(lines, needle):
     out = [ln for ln in lines if needle not in ln]
     if len(out) == len(lines):
-        raise ValueError("지울 줄을 못 찾았다: %r" % needle)
+        raise GenError("지울 줄을 못 찾았다: %r" % needle)
     return out
 
 
