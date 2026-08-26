@@ -66,19 +66,24 @@ JOBS = 2      # 에이전트 CLI 가 무겁고 둘 다 같은 트리에 쓰기 �
 
 # ── 배치 생성 ───────────────────────────────────────────────────────────────
 
-def _run_one(tag, film, i, extra, variant, out, keep_log=False):
+def _run_one(tag, film, i, extra, variant, out, keep_log=False, prefer=None):
     import pipeline
+    import script_gen
     name = "bench_%s_%s_%d" % (tag, film, i)
     spec = FILMS[film]
     logs = []
     t0 = time.time()
+    # 어느 에이전트로 뽑았는지 **기록에 남긴다.** 조건끼리 비교할 때 한쪽만 다른
+    # 에이전트면 「지시 효과」와 「에이전트 차이」가 구분이 안 된다(실측 8/26:
+    # Codex 한도로 nameN 이 3판만 나와 클로드로 갈아탈 때 드러난 함정).
     rec = {"tag": tag, "film": film, "run": i, "name": name,
-           "extra": extra, "variant": variant}
+           "extra": extra, "variant": variant,
+           "agent": (prefer or script_gen.find_runner(None)[0])}
     try:
         r = pipeline.run_script(str(spec["srt"]), out=None, project_name=name,
                                 target_s=spec["seconds"], extra=extra,
                                 movie_title=spec["title"], variant=variant,
-                                keep_log=keep_log, log=logs.append)
+                                keep_log=keep_log, prefer=prefer, log=logs.append)
         rec["script"] = str(r["script_path"])
         _lg = pathlib.Path(r["script_path"]).parent / "에이전트로그.txt"
         rec["agent_log"] = str(_lg) if _lg.exists() else None
@@ -110,20 +115,28 @@ def cmd_gen(a):
         pth = BENCH / ("%s.json" % a.tag)
         if pth.exists():
             for r in json.loads(pth.read_text(encoding="utf-8")):
-                if r.get("ok") and Path(r["script"]).exists():
-                    keep.append(r)
+                if not (r.get("ok") and Path(r["script"]).exists()):
+                    continue
+                # 에이전트를 바꿔 이어받으면 한 태그 안에 두 에이전트가 섞인다.
+                # 그건 조건이 아니라 잡음이다 — 그 판은 다시 뽑는다.
+                if a.agent and r.get("agent") and r["agent"] != a.agent:
+                    print("  %s 판%d 은 %s 로 뽑힌 판이라 다시 뽑습니다"
+                          % (r["film"], r["run"], r["agent"]))
+                    continue
+                keep.append(r)
             done = {(r["film"], r["run"]) for r in keep}
             jobs = [j for j in jobs if j not in done]
             print("이어서 — 이미 된 %d판은 건너뜁니다" % len(keep))
-    print("배치 %s — %d회 (영화 %d × %d회), 동시 %d개, 변형 %s"
+    print("배치 %s — %d회 (영화 %d × %d회), 동시 %d개, 에이전트 %s, 변형 %s"
           % (a.tag, len(jobs), len(films), a.runs, a.jobs,
-             a.variant or "없음(기본)"))
+             a.agent or "자동", a.variant or "없음(기본)"))
     out, sem, lock = list(keep), threading.Semaphore(a.jobs), threading.Lock()
 
     def worker(film, i):
         with sem:
             local = []
-            _run_one(a.tag, film, i, a.extra, a.variant, local, keep_log=a.keep_log)
+            _run_one(a.tag, film, i, a.extra, a.variant, local,
+                     keep_log=a.keep_log, prefer=a.agent)
             with lock:
                 out.extend(local)
 
@@ -430,6 +443,8 @@ def main(argv=None):
     p.add_argument("--films", default="father,robber,gentleman")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--extra", default="")
+    p.add_argument("--agent", default=None, choices=["codex", "claude"],
+                   help="이 배치를 뽑을 에이전트. 조건끼리 비교하려면 **같아야 한다**")
     p.add_argument("--resume", action="store_true",
                    help="이미 성공한 판은 건너뛰고 실패·안 한 판만 채운다")
     p.add_argument("--keep-log", dest="keep_log", action="store_true",
