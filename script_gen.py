@@ -698,7 +698,7 @@ def _inside_workdir(path):
 def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
              prefer=None,
              work_dir=None, timeout=1800, log=print, stop=None, progress=None,
-             variant=None):
+             variant=None, keep_log=False):
     """에이전트를 돌려 대본 txt를 만든다. 반환: Path(out_path)."""
     found = find_runner(prefer)
     if not found:
@@ -825,9 +825,15 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
                             str(out_path.parent / PLOT_NAME))
             else:
                 log("  (줄거리 파일은 안 나왔습니다 — 대본은 정상입니다)")
-            # 성공했으면 중간 파일은 남길 이유가 없다 (실패 때만 남겨 진단에 쓴다)
-            for tmp in (ptxt, outfile):
-                tmp.unlink(missing_ok=True)
+            # 성공했으면 중간 파일은 남길 이유가 없다 (실패 때만 남겨 진단에 쓴다).
+            # 실험에선 남긴다 — 에이전트가 자기 점검을 **실제로 했는지**는 로그의
+            # 편집 이벤트(썼다 → check → 다시 고쳤다)로만 알 수 있다. `생성중_` 접두어를
+            # 떼야 `_discard_dir` 이 중간 파일이 아니라 산출물로 본다.
+            ptxt.unlink(missing_ok=True)
+            if keep_log and outfile.exists():
+                shutil.move(str(outfile), str(out_path.parent / "에이전트로그.txt"))
+            else:
+                outfile.unlink(missing_ok=True)
             if sub_for_agent != sub_in:
                 sub_for_agent.unlink(missing_ok=True)
             log("  대본 생성 완료 (%.0f초)" % (time.time() - t0))

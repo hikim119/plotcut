@@ -66,7 +66,7 @@ JOBS = 2      # 에이전트 CLI 가 무겁고 둘 다 같은 트리에 쓰기 �
 
 # ── 배치 생성 ───────────────────────────────────────────────────────────────
 
-def _run_one(tag, film, i, extra, variant, out):
+def _run_one(tag, film, i, extra, variant, out, keep_log=False):
     import pipeline
     name = "bench_%s_%s_%d" % (tag, film, i)
     spec = FILMS[film]
@@ -78,8 +78,10 @@ def _run_one(tag, film, i, extra, variant, out):
         r = pipeline.run_script(str(spec["srt"]), out=None, project_name=name,
                                 target_s=spec["seconds"], extra=extra,
                                 movie_title=spec["title"], variant=variant,
-                                log=logs.append)
+                                keep_log=keep_log, log=logs.append)
         rec["script"] = str(r["script_path"])
+        _lg = pathlib.Path(r["script_path"]).parent / "에이전트로그.txt"
+        rec["agent_log"] = str(_lg) if _lg.exists() else None
         rec["ok"] = True
     except Exception as e:                                   # noqa: BLE001
         # 배치는 멈추지 않는다. 실패도 수확이다 — 외국어 분기는 실제 생성에서
@@ -108,7 +110,7 @@ def cmd_gen(a):
     def worker(film, i):
         with sem:
             local = []
-            _run_one(a.tag, film, i, a.extra, a.variant, local)
+            _run_one(a.tag, film, i, a.extra, a.variant, local, keep_log=a.keep_log)
             with lock:
                 out.extend(local)
 
@@ -323,6 +325,8 @@ def main(argv=None):
     p.add_argument("--films", default="father,robber,gentleman")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--extra", default="")
+    p.add_argument("--keep-log", dest="keep_log", action="store_true",
+                   help="성공해도 에이전트 로그를 남긴다 (자기 점검 수행 여부 확인용)")
     p.add_argument("--variant", default=None,
                    help="script_gen.VARIANTS 의 키. 생략하면 기본 프롬프트")
     p.add_argument("--jobs", type=int, default=JOBS)
