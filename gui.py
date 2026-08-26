@@ -606,7 +606,15 @@ class App:
         except pipeline.Stopped:
             self._log("\n⛔ 중단되었습니다.")
         except Exception as e:                              # noqa: BLE001
-            self._log("\n✘ %s: %s" % (type(e).__name__, e))
+            # 사람이 고칠 수 있는 실패면 예외 이름을 뗀다. `✘ ScriptError: …` 를
+            # 본 사용자가 「전 버전 오류인가」로 되물었다(실측) — 파이썬 클래스명은
+            # 사용자에게 아무 정보도 아니다. 예상 못 한 예외는 이름을 남긴다 —
+            # 그건 우리 버그라 이름이 있어야 찾는다.
+            import cli
+            if isinstance(e, cli.user_errors()):
+                self._log("\n✘ %s" % e)
+            else:
+                self._log("\n✘ %s: %s" % (type(e).__name__, e))
         finally:
             self.root.after(0, self._done)
 

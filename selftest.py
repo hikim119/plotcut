@@ -419,6 +419,7 @@ def dialogue_tests():
     foreign_span_tests()
     variant_tests()
     clierr_tests()
+    gui_msg_tests()
     header_shape_tests()
     header_msg_tests()
     usererr_tests()
@@ -716,6 +717,31 @@ def foreign_span_tests():
              + "%s %s" % (sio.fmt_span(c["start_s"], c["end_s"]), line) + chr(10))
         eq("%s — 그 구간의 언어로 판정한다" % label,
            sio.read(t, mix, log=lambda *_: None)["stats"]["time_mismatch"], want)
+
+
+def gui_msg_tests():
+    """GUI 로그가 사용자 오류에 파이썬 클래스명을 안 붙이는가. 자산 없이 돈다.
+
+    친구가 `✘ ScriptError: 블록 헤더 …` 를 보고 「전 버전 오류인가」로 되물었다.
+    `ScriptError:` 는 사용자에게 아무 정보도 아니다. 예상 못 한 예외는 이름을
+    남긴다 — 그건 우리 버그라 이름이 있어야 찾는다.
+    """
+    import inspect
+    import cli
+    print()
+    print("[30] GUI 오류 문구")
+    try:
+        import gui
+    except Exception as e:                                  # noqa: BLE001
+        check("gui 를 import 할 수 있다", False, repr(e))
+        return
+    src = inspect.getsource(gui)
+    check("사용자 오류는 cli.user_errors() 로 가른다", "cli.user_errors()" in src)
+    # 두 갈래가 다 살아 있어야 한다 — 이름 없는 쪽과 이름 있는 쪽
+    check("사용자 오류엔 이름을 안 붙인다", 'self._log("\\n✘ %s" % e)' in src)
+    check("예상 못 한 예외엔 이름을 남긴다",
+          'self._log("\\n✘ %s: %s" % (type(e).__name__, e))' in src)
+    check("gui 가 cli 를 불러도 순환이 없다", cli.user_errors())
 
 
 def header_shape_tests():
