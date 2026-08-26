@@ -430,6 +430,7 @@ def dialogue_tests():
     runner_core_tests()
     candidates_tests()
     quota_tests()
+    capcut_version_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -933,6 +934,46 @@ def width_error_tests():
           'st.get("too_wide")' not in inspect.getsource(cli.cmd_check))
     check("pipeline 에도 없다 (파서 하나가 정본)",
           "too_wide" not in inspect.getsource(pipeline))
+
+
+def capcut_version_tests():
+    """CapCut 형식 버전 경고 — **앱 버전이 아니라 형식 버전**을 본다. 자산 없이 돈다.
+
+    예전엔 스켈레톤을 뜬 앱 버전(8.9.1)과 설치된 앱 버전의 주 버전만 비교해서,
+    CapCut 이 9.x 로 올라가자 형식이 그대로인데도 매번 「주 버전이 다릅니다 —
+    꼭 열어 확인하세요」를 띄웠다. 실측(8/27): 이 PC 의 CapCut 9.3.0.3970 이 만든
+    프로젝트와 우리 스켈레톤이 둘 다 `new_version 175.0.0` 이었다. 늑대가 나타났다고
+    매번 외치면 진짜 나타났을 때 아무도 안 본다.
+    """
+    import guards
+    print()
+    print("[36] CapCut 형식 버전")
+    td = pathlib.Path(tempfile.mkdtemp())
+    try:
+        root = td / "draft"
+        (root / "프로젝트1").mkdir(parents=True)
+        (root / "프로젝트1" / "draft_content.json").write_text(
+            '{"version": 360000, "new_version": "175.0.0", "tracks": []}',
+            encoding="utf-8")
+        eq("기존 프로젝트에서 형식 버전을 읽는다",
+           guards.draft_format_versions(root), ["175.0.0"])
+        check("형식이 같으면 아무 말 안 한다",
+              guards.version_note("8.9.1", "175.0.0", root) is None)
+        msg = guards.version_note("8.9.1", "999.0.0", root) or ""
+        check("형식이 다르면 두 형식 버전을 대 놓고 말한다",
+              "175.0.0" in msg and "999.0.0" in msg, msg[:60])
+        empty = td / "빈폴더"
+        empty.mkdir()
+        note = guards.version_note("8.9.1", "175.0.0", empty)
+        check("비교할 프로젝트가 없으면 앱 버전으로 넘겨짚는다 (있을 때만)",
+              note is None or "CapCut" in note, str(note)[:60])
+        # 깨진 파일·읽을 수 없는 폴더에도 안 죽는다
+        (root / "깨진것").mkdir()
+        (root / "깨진것" / "draft_content.json").write_text("{", encoding="utf-8")
+        eq("깨진 프로젝트는 건너뛴다", guards.draft_format_versions(root), ["175.0.0"])
+        eq("없는 폴더는 빈 목록", guards.draft_format_versions(td / "없음"), [])
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def quota_tests():

@@ -119,16 +119,69 @@ def _read_json(path):
         return None
 
 
-def version_note(project_version):
-    """설치된 CapCut 과 만든 프로젝트 형식의 주 버전이 다르면 알려 준다.
+def draft_format_versions(draft_root):
+    """그 PC 의 **기존** CapCut 프로젝트들이 쓰는 형식 버전. 읽기 전용.
 
-    스켈레톤은 CapCut 8.9.1 에서 뜬 것이다. CapCut 이 9.x 로 올라가면 이 형식을
-    그대로 읽는지 확인된 바 없다 — 조용히 깨지는 것보다 한 줄 경고가 낫다.
+    CapCut 이 직접 만든 프로젝트를 보면 이 PC 의 CapCut 이 지금 어떤 형식으로
+    쓰는지 알 수 있다. 우리 스켈레톤과 같으면 호환은 **확인된 것**이다.
     """
+    out = []
+    if draft_root is None:
+        # 설치된 CapCut 이 **실제로 쓰는** 폴더를 본다. 시험용 `--draft-root` 로
+        # 어디에 만들든, 「이 PC 의 CapCut 이 무슨 형식을 읽는가」의 답은 거기 있다.
+        try:
+            import capcut_draft
+            draft_root = capcut_draft.find_capcut_root()
+        except Exception:                                   # noqa: BLE001
+            draft_root = None
+    root = Path(draft_root) if draft_root else None
+    if not root or not root.exists():
+        return out
+    try:
+        dirs = [d for d in root.iterdir() if d.is_dir()]
+    except OSError:
+        return out
+    dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    for d in dirs[:5]:
+        f = d / "draft_content.json"
+        try:
+            head = f.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        i = head.find('"new_version"')
+        if i < 0:
+            continue
+        j = head.find('"', head.find(":", i) + 1)
+        k = head.find('"', j + 1)
+        if j > 0 and k > j:
+            out.append(head[j + 1:k])
+    return out
+
+
+def version_note(project_version, new_version=None, draft_root=None):
+    """만든 프로젝트가 이 PC 의 CapCut 과 안 맞을 것 같으면 알려 준다.
+
+    **앱 버전이 아니라 형식 버전을 본다.** 예전엔 스켈레톤을 뜬 앱 버전(8.9.1)과
+    설치된 앱 버전의 주 버전만 비교해서, CapCut 이 9.x 로 올라가자 **형식이
+    그대로인데도** 매번 「주 버전이 다릅니다」를 띄웠다. 실측(8/27): 사용자의
+    CapCut 9.3.0.3970 이 만든 프로젝트와 우리 스켈레톤이 둘 다
+    `new_version 175.0.0` 이었다 — 형식은 같은데 겁만 준 셈이다.
+
+    그래서 순서가 이렇다:
+      1) 이 PC 의 기존 프로젝트에서 형식 버전을 읽는다. 우리 것과 같으면 **조용히**
+         (호환이 확인된 것이다). 다르면 그 두 형식 버전을 대 놓고 알려 준다.
+      2) 비교할 프로젝트가 하나도 없으면 예전처럼 앱 주 버전으로 넘겨짚는다.
+    """
+    seen = [v for v in draft_format_versions(draft_root) if v]
+    if seen and new_version:
+        if str(new_version) in seen:
+            return None
+        return ("이 PC 의 CapCut 프로젝트는 형식 %s 인데 만든 프로젝트는 %s 입니다 — "
+                "CapCut에서 꼭 열어 확인하세요." % (seen[0], new_version))
     got = installed_capcut_version()
     if not got or not project_version:
         return None
     if got.split(".")[0] == str(project_version).split(".")[0]:
         return None
-    return ("설치된 CapCut %s 과 프로젝트 형식 %s 의 주 버전이 다릅니다 — "
+    return ("설치된 CapCut %s 과 프로젝트를 뜬 CapCut %s 의 주 버전이 다릅니다 — "
             "만든 프로젝트를 CapCut에서 꼭 열어 확인하세요." % (got, project_version))

@@ -571,7 +571,8 @@ def run_build(script_path, srt_path, movie_path=None, project_name=None,
             log("[5] CapCut 프로젝트 생성")
             ident = cd.create_project(project_name, timeline,
                                       draft_root=draft_root, log=log)
-            note = guards.version_note(ident.get("app_version"))
+            note = guards.version_note(ident.get("app_version"),
+                                       ident.get("new_version"))
             if note:
                 log("  ⚠ " + note)
 
