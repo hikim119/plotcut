@@ -180,12 +180,31 @@ def split_paragraphs(text):
     return out
 
 
+# 한국어 IME 로 치면 전각이 나오기 쉽다. `［01:25:03 ～ 01:25:07］` 은 사람 눈엔
+# 헤더인데 정규식은 ASCII `[` `]` 만 받아서 **대사 문단으로 떨어졌고**, 그 줄이
+# 강등된 채 화면에 자막으로 떴다(실측). 매칭 전에 반각으로 돌린다.
+_FULLWIDTH = str.maketrans("［］（）：～－", "[]():~-")
+
+# 헤더처럼 생겼는데 정규식을 못 통과한 줄. `[00:04 ~ 00:12]`(시 생략) 같은 것 —
+# 조용히 대사로 읽으면 위와 같은 사고가 난다. 거절하고 이유를 말한다.
+_HEADER_LIKE = re.compile(r"^\[.*\d+:\d+.*\]$")
+
+
 def parse_header(p):
-    """'[a ~ b / 메모]' → (start_s, end_s, note). 아니면 None."""
-    m = _HEADER_PAT.match(p.strip())
+    """'[a ~ b / 메모]' → (start_s, end_s, note). 아니면 None.
+
+    시작이 끝보다 뒤면 `ScriptError` 다 — 예전엔 창이 뒤집힌 채로 통과해 안의
+    대사가 전부 「자막에서 찾지 못했습니다」로 강등됐다. 원인을 엉뚱하게 말했다.
+    """
+    q = p.strip().translate(_FULLWIDTH)
+    m = _HEADER_PAT.match(q)
     if not m:
         return None
     a, b = parse_hms(m.group(1)), parse_hms(m.group(2))
+    if b < a:
+        raise ScriptError(
+            "블록 헤더의 끝이 시작보다 앞입니다: %s" % q + "\n"
+            "  `[시작 ~ 끝]` 순서로 적으세요.")
     return a, b, (m.group(3) or "").strip()
 
 
@@ -215,6 +234,14 @@ def read(text, cues, log=print):
             cur = {"header": p.strip(), "win": (h[0], h[1]), "note": h[2], "items": []}
             blocks.append(cur)
             continue
+        # 헤더처럼 생겼는데 못 읽었다 — 대사로 넘기면 그 줄이 화면에 자막으로
+        # 뜬다. 시각은 반드시 `시:분:초` 세 자리다(`00:04` 는 4분인지 4초인지
+        # 모른다).
+        q = p.strip().translate(_FULLWIDTH)
+        if "\n" not in q and _HEADER_LIKE.match(q):
+            raise ScriptError(
+                "블록 헤더를 읽지 못했습니다: %s" % q + "\n"
+                "  시각은 `시:분:초` 세 자리로 적으세요 — 예: [01:25:03 ~ 01:25:07]")
         if cur is None:
             if not title:
                 title = " ".join(ln.strip() for ln in p.split("\n") if ln.strip())

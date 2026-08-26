@@ -419,6 +419,7 @@ def dialogue_tests():
     foreign_span_tests()
     variant_tests()
     clierr_tests()
+    header_shape_tests()
     header_msg_tests()
     usererr_tests()
     launcher_tests()
@@ -715,6 +716,48 @@ def foreign_span_tests():
              + "%s %s" % (sio.fmt_span(c["start_s"], c["end_s"]), line) + chr(10))
         eq("%s — 그 구간의 언어로 판정한다" % label,
            sio.read(t, mix, log=lambda *_: None)["stats"]["time_mismatch"], want)
+
+
+def header_shape_tests():
+    """헤더처럼 생긴 줄이 **대사로 떨어지지 않는가.** 자산 없이 돈다.
+
+    손으로 쓴 대본 14가지를 먹여 보니 셋이 조용히 잘못 읽혔다. 크래시가
+    아니라 더 나쁜 쪽 — 헤더 줄이 강등된 대사가 되어 **화면에 자막으로 떴다.**
+      전각 괄호  ［00:00:04 ～ 00:00:12］   한국어 IME 로 치면 이렇게 나온다
+      시 생략    [00:04 ~ 00:12]            4분인지 4초인지 모른다
+      역순       [00:00:12 ~ 00:00:04]      안의 대사가 전부 「못 찾음」으로 강등
+    """
+    import script_io as sio
+    print()
+    print("[29] 헤더 모양")
+    NL = chr(10)
+    cue = [{"idx": 1, "src_no": 1, "start_s": 5.0, "end_s": 7.0,
+            "text": "대사 한 줄", "lines": ["대사 한 줄"]}]
+
+    def read(h, d="대사 한 줄"):
+        return sio.read("제목" + NL * 2 + h + NL * 2 + d + NL, cue,
+                        log=lambda *_: None)
+
+    d = read("［00:00:04 ～ 00:00:12］")
+    eq("전각 괄호를 헤더로 읽는다", len(d["blocks"]), 1)
+    eq("전각 헤더가 대사로 안 떨어진다",
+       sum(1 for b in d["blocks"] for it in b["items"]), 1)
+    eq("전각 헤더의 창이 맞다", d["blocks"][0]["win"], (4.0, 12.0))
+    check("전각 + 메모도 읽는다",
+          read("［00:00:04 ～ 00:00:12 / 집 장면］")["blocks"][0]["note"] == "집 장면")
+
+    e = _grab(lambda: read("[00:04 ~ 00:12]"))
+    check("시 생략은 거절한다", isinstance(e, sio.ScriptError), repr(e)[:60])
+    check("세 자리로 적으라고 말한다", "시:분:초" in str(e), str(e)[:80])
+
+    e2 = _grab(lambda: read("[00:00:12 ~ 00:00:04]"))
+    check("역순은 거절한다", isinstance(e2, sio.ScriptError), repr(e2)[:60])
+    check("역순이라고 말한다", "끝이 시작보다 앞" in str(e2), str(e2)[:80])
+
+    # 대괄호로 **시작만** 하는 진짜 대사는 건드리면 안 된다
+    d3 = read("[00:00:04 ~ 00:00:12]", d="[웃음] 대사 한 줄")
+    eq("대괄호로 시작하는 대사는 그대로 대사다",
+       [it["kind"] for b in d3["blocks"] for it in b["items"]], ["dialogue"])
 
 
 def header_msg_tests():
