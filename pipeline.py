@@ -299,19 +299,50 @@ def _fingerprint(script_path, cues):
     return (tuple(quoted), first)
 
 
+def _candidate_line(path, cues):
+    """후보 한 줄 요약 — 「후보2 · 8분~93분 · 대사 41 · 줄거리 첫 줄」."""
+    import script_io
+    try:
+        doc = script_io.read(Path(path).read_bytes().decode("utf-8-sig"), cues,
+                             log=lambda *_: None)
+    except Exception:                                       # noqa: BLE001
+        return "(읽지 못했습니다)"
+    times = [c["start_s"] for _, it in script_io.items(doc)
+             for c in (it.get("cues") or [])]
+    dlg = sum(1 for _, it in script_io.items(doc) if it["kind"] == "dialogue")
+    span = ("%d분~%d분" % (min(times) // 60, max(times) // 60)) if times else "시각 없음"
+    plot = Path(path).parent / "줄거리.txt"
+    first = ""
+    if plot.exists():
+        for ln in plot.read_text(encoding="utf-8-sig").splitlines():
+            if ln.strip() and not ln.strip().startswith("["):
+                first = ln.strip()[:46]
+                break
+    return "%s · 대사 %d%s" % (span, dlg, (" · " + first) if first else "")
+
+
 def _pick_candidate(srt_path, rdir, out, n, gen, prefer, offset_s, fps_scale,
                     prefer_class, log, progress, stop):
-    """후보 n개를 **순차로** 뽑아 에이전트에게 순위를 매기게 하고 이긴 것을 고른다.
+    """후보 n개를 **순차로** 뽑아 나란히 남기고, 무엇이 다른지 한 줄씩 보여 준다.
+
+    **에이전트에게 고르게 하지 않는다.** 한때 순환 3순서로 순위를 매기게 했는데,
+    같은 대본 3개를 같은 심사자에게 두 번 재웠더니(9쌍) 켄달 τ = 0.33 이었다 —
+    미리 정해 둔 관문 0.5 에 미달이다. 1위 재현은 5/9(56%, 우연 33%)이고, 3순서를
+    평균낸 합의 1위조차 3편 중 1편만 재현됐다. 순위가 재현되지 않는데 「가장 좋은
+    걸 골랐습니다」라고 말할 수는 없다. 판정에 쓰는 시간도 안 쓴다.
+    (`script_gen.rank_candidates` 는 실험용으로 남아 있다 — `bench.py rank`.)
+
+    그래서 이 기능이 파는 건 **선택지**다: 편차가 큰 영화(gentleman 은 7판 중 5판이
+    다른 줄기)에서 서로 다른 대본 3개를 받아 사람이 30초 만에 고른다.
 
     · 후보 폴더는 **생성 직전에** 만든다 — 먼저 만들면 GenError 빈 폴더 청소가 안 돈다.
-    · 후보 1이 끝난 뒤 중단이면 Stopped 가 아니라 **후보 1을 결과로** 돌려준다.
-    · 후보가 서로 같으면(같은 큐·같은 훅) 심사를 건너뛴다 — father 같은 영화는 7판이
-      다 같아서, 3배 시간을 쓰고 동일 후보를 심사하는 건 정직하지 않다.
-    · 심사 실패는 오류가 아니다 — 후보 1을 쓰고 계속 간다. 후보는 전부 남는다.
+    · 후보 1이 끝난 뒤 중단·실패면 이미 나온 후보로 계속한다.
+    · 후보가 서로 같으면(같은 큐·같은 훅) 그냥 그렇게 말한다 — father 같은 영화는
+      7판이 다 같아서 고를 것이 없다.
     """
     import script_gen
     done = []
-    gen_share = 0.85
+    gen_share = 0.90
     for k in range(1, n + 1):
         _check(stop)
         cdir = Path(rdir) / ("후보%d" % k)
@@ -335,27 +366,20 @@ def _pick_candidate(srt_path, rdir, out, n, gen, prefer, offset_s, fps_scale,
                 log("  이미 나온 후보 %d개로 계속합니다" % len(done))
                 break
             raise
-    if len(done) == 1:
-        winner, why = 0, ""
-    else:
+    winner = 0
+    if len(done) > 1:
         cues, _ = subtitle.parse_file(srt_path, prefer_class, offset_s, fps_scale)
         fps = [_fingerprint(pth, cues) for pth in done]
         if all(fp == fps[0] for fp in fps):
-            log("  후보가 서로 같아(같은 큐·같은 훅) 심사 없이 1번을 씁니다")
-            winner, why = 0, ""
+            log("  후보 %d개가 서로 같습니다 — 이 영화는 판을 바꿔도 같은 대본이 나옵니다"
+                % len(done))
         else:
-            progress(gen_share)
-            log("  후보 %d개 심사 — 에이전트가 순위를 매깁니다" % len(done))
-            _check(stop)
-            res = script_gen.rank_candidates(done, cues, Path(rdir) / "심사",
-                                             prefer=prefer, log=log, stop=stop)
-            if res is None:
-                log("  심사 실패 — 후보 1을 씁니다")
-                winner, why = 0, ""
-            else:
-                winner, avg, why = res
-                log("  평균 순위: %s" % " · ".join("후보%d %.1f" % (i + 1, a)
-                                                  for i, a in enumerate(avg)))
+            log("  후보 %d개가 서로 다릅니다 — 골라 쓰세요:" % len(done))
+            for i, pth in enumerate(done, 1):
+                log("    후보%d · %s" % (i, _candidate_line(pth, cues)))
+            log("  기본은 후보1 입니다. 다른 걸 쓰려면 그 폴더의 대본을 열어 쓰세요:")
+            for i, pth in enumerate(done, 1):
+                log("    후보%d: %s" % (i, Path(pth).parent))
     progress(0.93)
     src = done[winner]
     for extra_name in (script_gen.PLOT_NAME, "에이전트로그.txt"):
@@ -363,8 +387,8 @@ def _pick_candidate(srt_path, rdir, out, n, gen, prefer, offset_s, fps_scale,
         if fp.exists():
             shutil.copy(str(fp), str(Path(rdir) / extra_name))
     shutil.copy(str(src), str(out))
-    log("  후보 %d개 중 **%d번**을 골랐습니다%s" % (len(done), winner + 1,
-                                              (" — " + why) if why else ""))
+    if len(done) > 1:
+        log("  후보 %d개 중 1번으로 이어서 만듭니다" % len(done))
     return Path(out)
 
 

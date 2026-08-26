@@ -292,8 +292,8 @@ class App:
             "나레이션 밑에서 원본 대사가 새는 구간을 지웁니다")
         r = row()
         title(r, "")
-        chk(r, self.cand_var, "후보 3개 중 고르기",
-            "약 4배 느립니다 — 대본을 3개 뽑아 에이전트가 이긴 것을 고릅니다. 후보는 전부 남습니다")
+        chk(r, self.cand_var, "서로 다른 대본 3개 뽑기",
+            "약 3배 느립니다 — 셋을 다 남기고 무엇이 다른지 보여 줍니다. 고르는 건 사람이 합니다")
         r = row()
         title(r, "대본 길이")
         tk.Entry(r, textvariable=self.secs_var, bg=BG3, fg=TEXT, width=5,

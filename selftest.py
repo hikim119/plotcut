@@ -1023,19 +1023,19 @@ def quota_tests():
 
 
 def candidates_tests():
-    """후보 N개 중 고르기 — 가짜 Popen 으로 끝까지. 자산 없이 돈다.
+    """서로 다른 대본 N개 뽑기 — 가짜 Popen 으로 끝까지. 자산 없이 돈다.
 
-    세 갈래: ① 심사가 후보2를 세 순서 모두 1위로 → 후보2가 최상위로 복사
-    ② 후보가 서로 같으면 심사 생략 ③ 심사가 답을 못 내면 후보 1.
-    순환 3순서는 후보2가 1·2·3번 자리에 **한 번씩** 서야 한다 — 심사자는 못 가르면
-    전원 1번을 찍으므로 그 편향이 상쇄되는 조건이다.
+    **에이전트가 고르지 않는다.** 순위 심사는 재현되지 않았다(τ 0.33 < 관문 0.5).
+    그래서 이 기능은 후보를 나란히 남기고 무엇이 다른지 한 줄씩 보여 주기만 한다.
+    갈래: ① 후보가 다르면 요약 목록 + 후보1로 진행 ② 서로 같으면 그렇게 말한다
+    ③ 도중 실패해도 이미 나온 후보로 계속 ④ **심사 호출을 한 번도 안 한다**.
     """
     import json
     import re
     import script_gen as sg
     import pipeline
     print()
-    print("[34] 후보 N개 중 고르기")
+    print("[34] 서로 다른 대본 N개")
     NL = chr(10)
     td = pathlib.Path(tempfile.mkdtemp())
     srt = td / "가짜영화_자막.srt"
@@ -1091,28 +1091,24 @@ def candidates_tests():
                                 log=logs.append)
         made.append(r["results_dir"])
         rd = pathlib.Path(r["results_dir"])
-        eq("후보 3개를 뽑고 3번 심사한다", (st["gen"], st["judge"]), (3, 3))
-        eq("순환 3순서 — 후보2가 세 자리에 한 번씩", sorted(st["slots"]), [1, 2, 3])
+        eq("후보 3개를 뽑고 **심사는 안 한다**", (st["gen"], st["judge"]), (3, 0))
         check("후보 폴더가 전부 남는다", all((rd / ("후보%d" % k)).is_dir() for k in (1, 2, 3)))
-        check("이긴 후보2가 최상위에 복사된다",
-              "대사 2 줄이야" in pathlib.Path(r["script_path"]).read_text(encoding="utf-8"))
-        check("줄거리도 같이 온다", "후보 2" in (rd / "줄거리.txt").read_text(encoding="utf-8"))
-        check("무엇을 왜 골랐는지 로그에 있다",
-              any("2번**을 골랐습니다 — 후보2" in l for l in logs))
+        check("기본은 후보1 로 이어간다",
+              "대사 1 줄이야" in pathlib.Path(r["script_path"]).read_text(encoding="utf-8"))
+        check("줄거리도 같이 온다", "후보 1" in (rd / "줄거리.txt").read_text(encoding="utf-8"))
+        check("후보마다 무엇이 다른지 한 줄씩 보여 준다",
+              sum(1 for l in logs if l.strip().startswith("후보") and "대사 " in l) >= 3,
+              str([l.strip()[:40] for l in logs if l.strip().startswith("후보")][:4]))
+        check("다른 후보를 쓰려면 어디를 보면 되는지 알려 준다",
+              any("후보3:" in l for l in logs))
 
         st.update(gen=0, judge=0, mode="same"); logs.clear()
         r = pipeline.run_script(str(srt), project_name="selftest_후보동일", candidates=3,
                                 log=logs.append)
         made.append(r["results_dir"])
-        eq("후보가 같으면 심사를 안 한다", st["judge"], 0)
-        check("그 사실을 말한다", any("심사 없이" in l for l in logs))
-
-        st.update(gen=0, judge=0, mode="fail"); logs.clear()
-        r = pipeline.run_script(str(srt), project_name="selftest_후보실패", candidates=3,
-                                log=logs.append)
-        made.append(r["results_dir"])
-        check("심사 실패면 후보 1 + 계속 진행", any("심사 실패" in l for l in logs)
-              and "대사 1 줄이야" in pathlib.Path(r["script_path"]).read_text(encoding="utf-8"))
+        check("후보가 서로 같으면 그렇게 말한다",
+              any("서로 같습니다" in l for l in logs))
+        check("같을 때는 고르라고 하지 않는다", not any("골라 쓰세요" in l for l in logs))
 
         # 후보 2에서 한도에 걸려도 후보 1을 버리지 않는다 (실측 8/26 계열)
         st.update(gen=0, judge=0, mode="quota"); logs.clear()

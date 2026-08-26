@@ -119,7 +119,7 @@ def main(argv=None):
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
     p.add_argument("--candidates", type=int, default=1,
-                   help="후보를 N개 뽑아 에이전트가 고른다 (약 4배 느림). 기본 1")
+                   help="서로 다른 대본을 N개 뽑아 전부 남긴다 (약 N배 느림). 기본 1")
 
     p = sub.add_parser("build", help="CapCut 프로젝트 만들기 (매번 새로 만든다)")
     p.add_argument("script", nargs="?", default=None,
