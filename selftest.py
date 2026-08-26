@@ -1096,6 +1096,13 @@ def candidates_tests():
         check("기본은 후보1 로 이어간다",
               "대사 1 줄이야" in pathlib.Path(r["script_path"]).read_text(encoding="utf-8"))
         check("줄거리도 같이 온다", "후보 1" in (rd / "줄거리.txt").read_text(encoding="utf-8"))
+        # 파이프라인이 되쓴 대본은 `@시각` 만 있고 `cues` 는 비어 있다. 거기서
+        # 시각을 못 읽으면 요약이 늘 「시각 없음」이 된다(실측: 27판 전부 그랬다).
+        import subtitle as _sub
+        _cues, _ = _sub.parse_file(str(srt))
+        _line = pipeline._candidate_line(r["script_path"], _cues)
+        check("`@시각` 만 있는 대본에서도 요약이 시각을 읽는다",
+              "시각 없음" not in _line, _line[:60])
         check("후보마다 무엇이 다른지 한 줄씩 보여 준다",
               sum(1 for l in logs if l.strip().startswith("후보") and "대사 " in l) >= 3,
               str([l.strip()[:40] for l in logs if l.strip().startswith("후보")][:4]))

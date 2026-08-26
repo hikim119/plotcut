@@ -307,8 +307,11 @@ def _candidate_line(path, cues):
                              log=lambda *_: None)
     except Exception:                                       # noqa: BLE001
         return "(읽지 못했습니다)"
+    # `@시각` 이 박힌 대본(파이프라인이 되쓴 것)은 `cues` 가 비고 `span` 만 있다.
+    # 실측: 27판 전부 「0~0분」으로 나왔다 — 후보 요약이 늘 시각을 못 읽고 있었다.
     times = [c["start_s"] for _, it in script_io.items(doc)
              for c in (it.get("cues") or [])]
+    times += [it["span"][0] for _, it in script_io.items(doc) if it.get("span")]
     dlg = sum(1 for _, it in script_io.items(doc) if it["kind"] == "dialogue")
     span = ("%d분~%d분" % (min(times) // 60, max(times) // 60)) if times else "시각 없음"
     plot = Path(path).parent / "줄거리.txt"
