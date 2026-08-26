@@ -206,7 +206,13 @@ def cmd_pack(a):
     for r in recs:
         if not r.get("ok"):
             continue
-        seq = pack_tool(r["script"], r["film"])
+        # 자막이 없거나 대본이 깨졌으면 그 항목만 건너뛴다 — `pack_human` 과 같은
+        # 이유다. 한 개 때문에 배치 전체를 못 굽게 두지 않는다.
+        try:
+            seq = pack_tool(r["script"], r["film"])
+        except Exception as e:                              # noqa: BLE001
+            print("  %s 건너뜀 — %s: %s" % (r["name"], type(e).__name__, str(e)[:60]))
+            continue
         p = outdir / ("%s.txt" % r["name"])
         p.write_text(render(seq), encoding="utf-8")
         made.append((r["name"], len(seq)))

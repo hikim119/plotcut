@@ -727,7 +727,19 @@ def create_project(project_name, timeline, draft_root=None, log=print):
         log(f"  (같은 이름이 있어 '{folder}' 폴더로 만듭니다)")
 
     proj_dir = root / folder
-    shutil.copytree(TEMPLATE_DIR, proj_dir)
+    try:
+        shutil.copytree(TEMPLATE_DIR, proj_dir)
+    except (shutil.Error, OSError) as e:
+        # 드래프트 안에 `Timelines/<GUID>/common_attachment/…json` 이 있어 폴더
+        # 이름이 길면 **경로 전체가 MAX_PATH(260자)** 를 넘는다. `copytree` 는
+        # 그걸 `shutil.Error`(안에 WinError 206)로 던지는데 사용자 오류 목록에
+        # 없어서 트레이스백이 그대로 나갔다(실측: --name 300자). 반쯤 복사된
+        # 폴더는 치우고 — CapCut 이 깨진 프로젝트로 읽는다 — 무엇을 줄이라고 말한다.
+        shutil.rmtree(proj_dir, ignore_errors=True)
+        raise DraftError(
+            "CapCut 프로젝트 폴더를 만들 수 없습니다: %s\n  %s\n"
+            "  프로젝트 이름(--name)이 너무 길면 경로가 윈도우 상한(260자)을 "
+            "넘습니다 — 이름을 줄이세요." % (proj_dir, str(e)[:160])) from e
     # 반드시 resolve_timeline_id 앞에서 — 저 함수는 세 곳을 교차검증만 한다
     _reid_timeline(proj_dir)
     timeline_id = resolve_timeline_id(proj_dir)

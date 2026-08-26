@@ -84,7 +84,12 @@ def _pre_post(cue_a, cue_b, by_idx):
     nxt = by_idx.get(cue_b["idx"] + 1)
     gap_b = (cue_a["start_s"] - prev["end_s"]) if prev else 99.0
     gap_a = (nxt["start_s"] - cue_b["end_s"]) if nxt else 99.0
-    return min(PRE, max(0.0, gap_b) / 2.0), min(POST, max(0.0, gap_a) / 2.0)
+    # 영화 첫 큐는 이전 큐가 없어 gap_b=99 → 앞 여유를 통째로 받는데, 그 큐가
+    # 0초 근처면 창이 음수로 시작한다. 그러면 아래 2단계 클램프가 창을 **밀어서**
+    # 다음 대사와 겹쳤고 「여유 클램프 버그」로 죽었다(실측: father.srt 첫 두
+    # 큐로 쓴 두 줄짜리 대본). 시작 시각보다 앞으로는 못 간다.
+    pre = min(PRE, max(0.0, gap_b) / 2.0, max(0.0, cue_a["start_s"]))
+    return pre, min(POST, max(0.0, gap_a) / 2.0)
 
 
 def _place_block(bi, blk, by_idx, dur_of, warn):
@@ -212,7 +217,10 @@ def build(doc, cues, movie_duration_s, fps=24.0, narration_durs=None,
         L = u["src1"] - u["src0"]
         if u["src0"] < 0:
             warn("블록%d 의 한 구간이 영화 시작 이전을 가리켜 0초로 당겼습니다." % (u["bi"] + 1))
-            u["src0"], u["src1"] = 0.0, L
+            # **자르지 밀지 않는다.** 예전엔 길이를 지키려고 src1 도 같이 밀어서
+            # 다음 아이템과 겹쳤다 — 큐 번호는 앞으로 가는데 소스는 뒤로 가는
+            # 꼴이라 되감기 검사가 LayoutError 로 죽였다.
+            u["src0"] = 0.0
         if u["src1"] > movie_duration_s:
             warn("블록%d 의 한 구간이 영화 끝(%s)을 넘어 당겼습니다."
                  % (u["bi"] + 1, _hms(movie_duration_s)))

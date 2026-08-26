@@ -425,6 +425,7 @@ def dialogue_tests():
     usererr_tests()
     launcher_tests()
     width_error_tests()
+    buildpath_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -463,15 +464,14 @@ def width_tests():
     d2 = _read("#1-2")
     check("상한 안(2큐)은 조용하다",
           not any("상한" in w for w in d2["warnings"]), str(d2["warnings"]))
-    # 예전엔 여기서 경고가 0건이었다. `#1-10` 이면 자막 10줄이 한 줄로 뭉개지는데
-    # `MAX_ITEM_S` 는 덮는 시간이 20초를 넘을 때만 걸려 촘촘한 자막에선 안 걸린다.
-    d10 = _read("#1-10")
-    check("상한 넘으면 경고한다(10큐)",
-          any("상한 %d개" % sio.MAX_MERGE in w for w in d10["warnings"]),
-          str(d10["warnings"]))
-    d3 = _read("#1-3")
-    check("경계 바로 위(3큐)도 잡는다",
-          any("상한" in w for w in d3["warnings"]), str(d3["warnings"]))
+    # 처음엔 경고(⚠)였고, 다음엔 check 에서만 ✘ 였고, 이제 **파서가 던진다** —
+    # `#1-10` 이면 자막 10줄이 한 줄로 뭉개지는데 build 가 그대로 만들었다.
+    e10 = _grab(lambda: _read("#1-10"))
+    check("상한 넘으면 던진다(10큐)",
+          isinstance(e10, sio.ScriptError) and "상한(%d개)" % sio.MAX_MERGE in str(e10),
+          repr(e10)[:80])
+    e3 = _grab(lambda: _read("#1-3"))
+    check("경계 바로 위(3큐)도 던진다", isinstance(e3, sio.ScriptError), repr(e3)[:80])
 
 
 def _canon_prompt(text):
@@ -736,12 +736,17 @@ def gui_msg_tests():
         check("gui 를 import 할 수 있다", False, repr(e))
         return
     src = inspect.getsource(gui)
-    check("사용자 오류는 cli.user_errors() 로 가른다", "cli.user_errors()" in src)
+    check("사용자 오류는 cli.user_message() 로 가른다", "cli.user_message(e)" in src)
     # 두 갈래가 다 살아 있어야 한다 — 이름 없는 쪽과 이름 있는 쪽
-    check("사용자 오류엔 이름을 안 붙인다", 'self._log("\\n✘ %s" % e)' in src)
-    check("예상 못 한 예외엔 이름을 남긴다",
-          'self._log("\\n✘ %s: %s" % (type(e).__name__, e))' in src)
+    check("사용자 오류엔 이름을 안 붙인다", chr(39) + "✘ " + chr(39) + " + msg" in src
+          or "\"✘ \" + msg" in src)
+    check("예상 못 한 예외엔 이름을 남긴다", "(type(e).__name__, e)" in src)
     check("gui 가 cli 를 불러도 순환이 없다", cli.user_errors())
+    # 작업 중 창 닫기 — 예전엔 stop 만 켜고 바로 destroy 해서 Codex 트리가 남았다
+    check("닫을 때 워커를 기다린다", "w.join(timeout=" in src)
+    check("워커 핸들을 들고 있다", "self._worker = threading.Thread" in src)
+    # 빈 탭 저장 — 예전엔 조용히 return
+    check("빈 탭 저장은 말을 한다", "탭이 비어 있습니다" in src)
 
 
 def header_shape_tests():
@@ -852,8 +857,10 @@ def usererr_tests():
     print()
     print("[27] CLI 가 잡는 예외")
     caught = cli.user_errors()
+    # main → user_message → user_errors 순으로 흐른다. 이름을 적는 곳은 없다.
     check("긁어모아서 만든다 (이름을 안 적는다)",
-          "user_errors" in inspect.getsource(cli.main), "cli.main")
+          "user_message(e)" in inspect.getsource(cli.main)
+          and "user_errors()" in inspect.getsource(cli.user_message), "cli.main")
     # 저장소 전체에서 예외를 정의한 모듈을 찾아, 하나라도 빠지면 실패한다.
     missing = []
     for py in sorted(ROOT.glob("*.py")):
@@ -900,22 +907,96 @@ def launcher_tests():
 
 
 def width_error_tests():
-    """`#a-b` 폭 상한은 **✘ 여야 한다.** 자산 없이 돈다.
+    """`#a-b` 폭 상한은 **파서가 던진다** — check·build·GUI 가 같은 곳에서 멈추게.
 
-    어제 ⚠ 로 넣었는데, 생성 프롬프트가 에이전트에게 「✘ 만 고치고 경고는
-    남긴 채 끝내라」고 시킨다. 그래서 잡아 놓고도 자동 수정 루프에 안 들어가
-    그대로 나갔다 — 실측: `#1-10` 대본이 `통과 — 경고 16건` 으로 exit 0.
+    그제 ⚠ 로 넣었고, 어제 `cli.py check` 에서 ✘ 로 올렸다. 그런데 `build` 는
+    그 검사를 안 거쳐서 자막 9줄이 뭉개진 프로젝트가 **그대로 만들어졌다**
+    (실측: state.json 에 cuts 1 · subs 2). 검사와 빌드가 다른 답을 내면 검사가
+    있으나 마나다. `script_io.read` 가 `ScriptError` 로 던지면 세 경로가 같다.
     """
     import inspect
     import cli
+    import pipeline
+    import script_io as sio
     print()
-    print("[25] `#a-b` 폭 상한은 ✘")
-    src = inspect.getsource(cli.cmd_check)
-    check("`too_wide` 를 errors 에 넣는다",
-          'st.get("too_wide")' in src and "errors.append" in src)
-    # ⚠ 로만 두면 exit 0 이 된다 — 그 사실을 문구로 못 박는다
-    check("왜 ✘ 인지가 코드에 적혀 있다",
-          "경고는 남긴 채" in src or "자동 수정 루프" in src)
+    print("[25] `#a-b` 폭 상한은 파서가 던진다")
+    check("script_io.read 가 too_wide 를 던진다",
+          'stats.get("too_wide")' in inspect.getsource(sio.read)
+          and "raise ScriptError" in inspect.getsource(sio.read))
+    # 한 곳에서만 판정한다 — check 에 별도 게이트가 남아 있으면 또 갈라진다
+    check("cmd_check 에 별도 too_wide 게이트가 없다",
+          'st.get("too_wide")' not in inspect.getsource(cli.cmd_check))
+    check("pipeline 에도 없다 (파서 하나가 정본)",
+          "too_wide" not in inspect.getsource(pipeline))
+
+
+def buildpath_tests():
+    """손으로 쓴 대본이 **빌드 경로**에서 겪는 것. 자산 없이 돈다.
+
+    `check` 는 잡는데 `build` 는 통과하던 것 둘(헤더 섞임 · `#a-b` 폭)과,
+    영화 첫 큐에서 죽던 것 하나. 전부 점검 워크플로가 실제 build 로 재현했다.
+    """
+    import cli
+    import layout
+    import pipeline
+    import script_io as sio
+    print()
+    print("[31] 손으로 쓴 대본 — 빌드 경로")
+    NL = chr(10)
+    cue = [{"idx": 1, "src_no": 1, "start_s": 0.0, "end_s": 1.0,
+            "text": "갑작스런 비보를", "lines": ["갑작스런 비보를"]},
+           {"idx": 2, "src_no": 2, "start_s": 1.0, "end_s": 2.0,
+            "text": "받게 된 할", "lines": ["받게 된 할"]},
+           {"idx": 3, "src_no": 3, "start_s": 5.0, "end_s": 7.0,
+            "text": "죄송하지만 지금은", "lines": ["죄송하지만 지금은"]}]
+
+    # ① 헤더 뒤 빈 줄 누락 → 헤더+대사가 한 문단. 예전엔 헤더 조각이 자막으로 떴다
+    joined = ("제목" + NL * 2 + "[00:00:00 ~ 00:00:03]" + NL + "갑작스런 비보를"
+              + NL * 2 + "죄송하지만 지금은" + NL)
+    e = _grab(lambda: sio.read(joined, cue, log=lambda *_: None))
+    check("헤더+대사가 한 문단이면 파서가 던진다",
+          isinstance(e, sio.ScriptError) and "빈 줄" in str(e), repr(e)[:80])
+    # 전각 헤더도 같은 자리에서 잡혀야 한다
+    e = _grab(lambda: sio.read(joined.replace("[00:00:00 ~ 00:00:03]",
+                                             "［00:00:00 ～ 00:00:03］"),
+                               cue, log=lambda *_: None))
+    check("전각 헤더+대사도 던진다", isinstance(e, sio.ScriptError), repr(e)[:80])
+
+    # ② 영화 첫 큐 두 개를 잇는 대본 — 예전엔 「여유 클램프 버그」LayoutError
+    first = ("제목" + NL * 2 + "[00:00:00 ~ 00:00:03]" + NL * 2 + "갑작스런 비보를"
+             + NL * 2 + "받게 된 할" + NL)
+    doc = sio.read(first, cue, log=lambda *_: None)
+    e = _grab(lambda: layout.build(doc, cue, 100.0, fps=24.0, log=lambda *_: None))
+    check("영화 첫 큐에서 안 죽는다", not isinstance(e, Exception), repr(e)[:80])
+    # 위가 실패하면 여기도 죽는다 — 뮤테이션 때 트레이스백 대신 「실패」로 보이게 가드
+    pl = e if isinstance(e, Exception) else layout.build(doc, cue, 100.0, fps=24.0,
+                                                          log=lambda *_: None)
+    check("첫 창이 0초에서 시작하고 밀리지 않았다",
+          not isinstance(pl, Exception)
+          and pl["units"][0]["src0"] == 0.0 and pl["units"][0]["src1"] == 1.0,
+          repr(pl)[:80] if isinstance(pl, Exception)
+          else str([(u["src0"], u["src1"]) for u in pl["units"]]))
+    check("음수 창 경고가 없다 (애초에 안 만든다)",
+          not isinstance(pl, Exception)
+          and not any("영화 시작 이전" in w for w in pl["warnings"]))
+
+    # ③ 긴 --name — 예전엔 「파일을 찾을 수 없습니다」로 새어 입력 파일을 의심하게
+    #    했고, 자른 뒤에도 CapCut 드래프트 경로가 MAX_PATH 를 넘어 shutil.Error
+    #    트레이스백이 났다. 두 층 다 막아야 한다.
+    import inspect
+    import capcut_draft
+    check("이름을 자른다", len(pipeline._safe_name("가" * 300)) <= pipeline.NAME_MAX)
+    check("자른 이름이 비지 않는다", pipeline._safe_name("가" * 300))
+    check("상한이 MAX_PATH 여유를 남긴다 (≤60)", pipeline.NAME_MAX <= 60)
+    _cp = inspect.getsource(capcut_draft.create_project)
+    check("드래프트 복사 실패를 DraftError 로 바꾼다",
+          "except (shutil.Error, OSError)" in _cp and "raise DraftError" in _cp)
+    check("반쯤 복사된 폴더를 치운다", "rmtree(proj_dir" in _cp)
+
+    # ④ CLI 와 GUI 가 같은 문구를 쓴다
+    m = cli.user_message(FileNotFoundError(2, "x", "없다.srt"))
+    check("없는 파일도 이름 없이 알려 준다", m and "찾을 수 없습니다" in m, str(m))
+    check("모르는 예외는 None", cli.user_message(ValueError("x")) is None)
 
 
 def nardur_tests():
@@ -1285,17 +1366,15 @@ def main():
         layout.apply_headers(d8, p8["headers"]) or d8), cues)["blocks"]),
        len(d8["blocks"]))
 
-    # ⑨ 헤더 앞 빈 줄을 빼면 헤더가 대사 문단에 먹혀 들어간다 (탭에서 흔한 실수).
-    #    강등으로 잡히고, 문단 안에 헤더 문자열이 남아 있어야 cli 가 원인을 짚어 준다.
-    # 헤더가 먹히면 그 블록이 통째로 사라져 뒤 문단들까지 앞 블록 범위 밖으로 밀린다.
-    # 강등 개수는 대본마다 다르므로 "잡힌다 + 원인이 남는다" 만 고정한다.
-    d9, _ = run(ref.replace("\n\n[01:36:47 ~ 01:36:54]", "\n[01:36:47 ~ 01:36:54]"))
-    check("⑨ 헤더가 문단에 붙으면 강등된다", d9["stats"]["demoted"] >= 1)
-    # 나레이션에 먹히면 블록이 통째로 사라지고 엉뚱한 문단이 강등된다.
-    # 원인을 짚으려면 **강등 여부와 무관하게** 전체 문단에서 헤더를 찾아야 한다.
-    check("⑨ 어느 문단엔가 헤더 문자열이 남아 cli 가 원인을 짚을 수 있을 것",
-          any("[01:36:47" in it["text"] for _, it in script_io.items(d9)))
-    check("⑨ 블록 하나가 사라진다", len(d9["blocks"]) < len(doc["blocks"]))
+    # ⑨ 헤더 앞 빈 줄을 빼면 헤더가 앞 문단에 먹혀 들어간다 (탭에서 흔한 실수).
+    #    **예전 계약**: 강등으로 잡히고 문단 안에 헤더 문자열이 남아 `cli check` 가
+    #    원인을 짚는다. 그런데 그 계약이 `build` 는 안 거쳐서 헤더 조각이 화면에
+    #    자막으로 떴다(실측, CapCut 드래프트 texts). **새 계약**: 파서가 던진다 —
+    #    check·build·GUI 가 같은 곳에서 멈춘다.
+    e9 = _grab(lambda: run(ref.replace("\n\n[01:36:47 ~ 01:36:54]",
+                                       "\n[01:36:47 ~ 01:36:54]")))
+    check("⑨ 헤더가 문단에 붙으면 파서가 던진다",
+          isinstance(e9, script_io.ScriptError) and "빈 줄" in str(e9), repr(e9)[:80])
 
     import capcut_draft
     tl7 = capcut_draft.build_timeline(

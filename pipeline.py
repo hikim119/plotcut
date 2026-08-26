@@ -108,12 +108,28 @@ def fresh_results_dir(project_name, suffix=""):
             return d
         except FileExistsError:
             name, n = "%s_%d%s" % (base, n, suffix), n + 1
+        except OSError as e:
+            # 이름이 너무 길거나(NTFS 한 구성요소 255바이트) 드라이브가 꽉 찼을 때.
+            # 예전엔 `FileNotFoundError` 로 새어 나가 CLI 가 「파일을 찾을 수
+            # 없습니다: results\가가가…」 라고 했다 — **입력 파일이 없는 것처럼**
+            # 읽혀서 사용자가 멀쩡한 자막·대본 경로를 의심한다(실측).
+            raise guards.GuardError(
+                "결과 폴더를 만들 수 없습니다: %s\n  %s\n"
+                "  --name 이 너무 길거나 디스크가 꽉 찼을 수 있습니다." % (d, e))
+
+
+# 두 상한이 있다. NTFS 는 한 구성요소 255바이트(한글 3바이트 → 85자). 그런데
+# 진짜 병목은 **경로 전체 260자(MAX_PATH)** 다 — CapCut 드래프트는 폴더 아래에
+# `Timelines/<GUID>/common_attachment/attachment_gen_ai_info.json` 이 붙어서
+# 루트 ~70자 + 이름 + ~95자다. 80자로 두니 임시 루트에서 WinError 206 이 났다
+# (실측). 실제 프로젝트 이름은 30자 안팎이라 60이면 충분하고 100자 여유가 남는다.
+NAME_MAX = 60
 
 
 def _safe_name(name):
     bad = '<>:"/\\|?*'
     out = "".join("_" if c in bad else c for c in str(name)).strip(" .")
-    return out or "project"
+    return (out or "project")[:NAME_MAX]
 
 
 def list_projects():

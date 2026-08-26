@@ -253,6 +253,19 @@ def read(text, cues, log=print):
             raise ScriptError(
                 "블록 헤더를 읽지 못했습니다: %s" % q + "\n"
                 "  시각은 `시:분:초` 세 자리로 적으세요 — 예: [01:25:03 ~ 01:25:07]")
+        # 헤더와 대사가 **한 문단에 붙었다** — 헤더 뒤 빈 줄을 빠뜨린 것. 손으로
+        # 고칠 때 제일 흔한 실수다. 예전엔 `cli.py check` 만 잡고 `build`(와 GUI)는
+        # 그대로 만들어서 `[00:00:00` `~ 00:00:03]` 같은 헤더 조각이 **화면 자막으로
+        # 떴다**(실측, CapCut 드래프트 texts 에서 확인). 검사와 빌드가 다른 답을
+        # 내면 안 되므로 파서에서 막는다 — 그러면 세 경로가 같은 곳에서 멈춘다.
+        if "\n" in q and any(_HEADER_PAT.match(ln.strip()) or _HEADER_LIKE.match(ln.strip())
+                              for ln in q.split("\n")):
+            # 파일 전체가 한 문단인 경우(빈 줄이 하나도 없음)와 같은 문구를 쓴다 —
+            # 원인이 같다(빈 줄 누락). 두 문구로 갈라 두면 검사가 둘로 갈린다.
+            raise ScriptError(
+                "블록 헤더는 있는데 **문단이 안 나뉘어 있습니다.**" + "\n"
+                "  빈 줄 하나가 문단 구분입니다 — 헤더 `[...]` 앞뒤로 빈 줄을 넣으세요."
+                + "\n  여기서 걸렸습니다: %s" % q.split("\n")[0][:40])
         if cur is None:
             if not title:
                 title = " ".join(ln.strip() for ln in p.split("\n") if ln.strip())
@@ -332,6 +345,16 @@ def read(text, cues, log=print):
             " 자막 파일이면 자막 칸에 넣으세요.")
 
     stats = _match_all(blocks, cues, warnings, log)
+    # `#a-b` 폭 상한 위반은 **여기서** 던진다. 어제 `cli.py check` 에서 ✘ 로 올렸는데
+    # `build`(와 GUI)는 그 검사를 안 거쳐서 자막 9줄이 뭉개진 프로젝트가 그대로
+    # 만들어졌다(실측: state.json 에 cuts 1 · subs 2). 검사와 빌드가 다른 답을
+    # 내면 검사가 있으나 마나다 — 파서에서 막아 세 경로가 같은 곳에서 멈춘다.
+    if stats.get("too_wide"):
+        head = ("`#a-b` 로 연속 큐를 %d군데에서 상한(%d개)보다 넓게 묶었습니다 — "
+                "그 자리에서 자막 여러 줄이 한 줄로 뭉개집니다. 문단을 나누세요."
+                % (stats["too_wide"], MAX_MERGE))
+        detail = "\n  ".join(w for w in warnings if "상한" in w)[:400]
+        raise ScriptError(head + "\n  " + detail)
     return {"title": title, "blocks": blocks,
             "warnings": warnings, "stats": stats}
 

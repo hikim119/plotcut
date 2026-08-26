@@ -597,7 +597,8 @@ class App:
         for b in (self.btn_build, self.btn_script):
             b.configure(state="disabled")
         self._show_tab("log")
-        threading.Thread(target=self._work, args=(fn,), daemon=True).start()
+        self._worker = threading.Thread(target=self._work, args=(fn,), daemon=True)
+        self._worker.start()
 
     def _work(self, fn):
         try:
@@ -611,10 +612,11 @@ class App:
             # 사용자에게 아무 정보도 아니다. 예상 못 한 예외는 이름을 남긴다 —
             # 그건 우리 버그라 이름이 있어야 찾는다.
             import cli
-            if isinstance(e, cli.user_errors()):
-                self._log("\n✘ %s" % e)
+            msg = cli.user_message(e)
+            if msg is not None:
+                self._log(chr(10) + "✘ " + msg)
             else:
-                self._log("\n✘ %s: %s" % (type(e).__name__, e))
+                self._log(chr(10) + "✘ %s: %s" % (type(e).__name__, e))
         finally:
             self.root.after(0, self._done)
 
@@ -753,6 +755,10 @@ class App:
             return
         text = self._script_content()
         if not text.strip():
+            # 예전엔 조용히 return — 「저장하고 다시 만들기」를 눌렀는데 아무 일도
+            # 안 일어났다(실측). 빈 대본을 저장하면 파일이 날아가니 막는 건 맞지만
+            # 말은 해야 한다.
+            messagebox.showwarning("대본", "[타임라인 대본] 탭이 비어 있습니다 — 저장할 내용이 없습니다.")
             return
         pipeline.write_atomic(p, text if text.endswith("\n") else text + "\n")
         self._log("저장: %s" % p)
@@ -783,6 +789,14 @@ class App:
                 "종료", "작업이 진행 중입니다. 정말 닫을까요?"):
             return
         self._stop.set()
+        # 예전엔 stop 을 켜자마자 destroy 했다. 워커는 daemon 이라 부모가 끝나면
+        # 그 자리에서 죽는데, 에이전트 폴링(0.4초)이 stop 을 볼 기회가 없어
+        # **Codex 프로세스 트리가 창 없이 그대로 남았다**(3회 재현, 3회 모두).
+        # 최대 10분 CPU·토큰을 태운다. 폴링이 stop 을 보고 _kill_tree 를 부를
+        # 시간을 준다 — 보통 0.5초 안에 끝난다.
+        w = getattr(self, "_worker", None)
+        if w is not None and w.is_alive():
+            w.join(timeout=3.0)
         self.root.destroy()
 
 

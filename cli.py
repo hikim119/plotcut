@@ -77,6 +77,21 @@ def user_errors():
     return tuple(out)
 
 
+def user_message(e):
+    """사람이 고칠 수 있는 실패면 한 줄 메시지, 아니면 None. **CLI 와 GUI 가 같이 쓴다.**
+
+    파이썬 내장 예외 둘은 `user_errors()` 에 안 잡혀서 GUI 가 `FileNotFoundError:`
+    를 그대로 찍었다(실측). 판정을 한 곳에 두면 두 화면이 어긋나지 않는다.
+    """
+    if isinstance(e, user_errors()):
+        return str(e)
+    if isinstance(e, FileNotFoundError):
+        return "파일을 찾을 수 없습니다: %s" % (e.filename or e)
+    if isinstance(e, UnicodeDecodeError):
+        return "파일 인코딩을 읽지 못했습니다 — UTF-8 로 저장해 보세요."
+    return None
+
+
 def main(argv=None):
     _utf8()
     ap = argparse.ArgumentParser(prog="plotcut")
@@ -139,17 +154,9 @@ def main(argv=None):
         print("\n⛔ 중단되었습니다.")
         return 130
     except Exception as e:                                  # noqa: BLE001
-        if isinstance(e, user_errors()):
-            print("\n✘ %s" % e)
-            return 1
-        # 경로를 잘못 적는 건 **처음 쓰는 사람이 제일 자주 하는 실수**인데
-        # 예전엔 `FileNotFoundError` 트레이스백이 그대로 나갔다(실측).
-        # 어느 파일인지만 알려 주면 스스로 고친다.
-        if isinstance(e, FileNotFoundError):
-            print("\n✘ 파일을 찾을 수 없습니다: %s" % (e.filename or e))
-            return 1
-        if isinstance(e, UnicodeDecodeError):
-            print("\n✘ 파일 인코딩을 읽지 못했습니다 — UTF-8 로 저장해 보세요.")
+        msg = user_message(e)
+        if msg is not None:
+            print(chr(10) + "✘ " + msg)
             return 1
         raise
 
@@ -235,18 +242,8 @@ def cmd_check(a):
               st.get("time_mismatch", 0), st.get("time_nocue", 0)))
     print("  매칭: 서명 %d · 2큐병합 %d · 유사 %d%s · 강등 %d"
           % (st["by_sig"], st["by_merge"], st["by_diff"], _tm, st["demoted"]))
-    # `#a-b` 폭 상한 위반은 **✘ 다.** 어제 넣을 때 ⚠ 로 뒀는데, 생성 프롬프트가
-    # 에이전트에게 「✘ 만 고치고 경고는 남긴 채 끝내라」고 시킨다
-    # (`script_gen.py` 의 검증 지시). 그래서 잡아 놓고도 자동 수정 루프에
-    # 안 들어가 그대로 나갔다 — 실측: `#1-10` 짜리 대본이 `통과 — 경고 16건`
-    # 으로 exit 0 이었다. 위반하면 자막 9줄이 조용히 사라진다.
-    # 채택 근거: 실제 생성 대본 10개 범위 **전부 폭 2 이하**(위반 0), 정답
-    # 3편은 `#a-b` 를 아예 안 쓴다. 겹침 없음.
-    if st.get("too_wide"):
-        errors.append(
-            "`#a-b` 로 연속 큐를 %d군데에서 상한(%d개)보다 넓게 묶었습니다 — "
-            "그 자리에서 자막 여러 줄이 한 줄로 뭉개집니다. 문단을 나누세요."
-            % (st["too_wide"], script_io.MAX_MERGE))
+    # `#a-b` 폭 위반과 헤더 섞임은 이제 `script_io.read` 가 **ScriptError 로**
+    # 던진다 — check·build·GUI 가 같은 곳에서 멈추게. 여기엔 검사가 없다.
     if st.get("time_mismatch") or st.get("time_nocue"):
         errors.append(
             "`@시각` 대본의 대사 %d개가 그 시각의 자막과 다릅니다 — "
@@ -296,17 +293,6 @@ def cmd_check(a):
                 print("    ✘ 블록%d  #%d  %s"
                       % (bi + 1, ref[0], " / ".join(it["lines"])[:40]))
 
-    # 헤더 앞뒤에 빈 줄을 안 넣으면 헤더가 바로 앞 문단에 먹혀 들어간다.
-    # 탭에서 직접 고칠 때 자주 나오는데 증상만 봐선 원인을 알 수 없다 —
-    # 나레이션에 먹히면 그 블록이 통째로 사라지고 **엉뚱한 문단들이** 강등된다.
-    # 그래서 강등 여부와 무관하게 대사·나레이션 전부를 훑는다.
-    for bi, it in script_io.items(doc):
-        if re.search(r"\[\s*\d{1,2}:\d{2}:\d{2}", it["text"]):
-            errors.append(
-                "블록%d 의 %s 안에 블록 헤더가 들어가 있습니다 — 헤더 `[...]` "
-                "앞뒤로 **빈 줄**을 넣으세요: %s"
-                % (bi + 1, "나레이션" if it["kind"] == "narration" else "대사 문단",
-                   it["text"][:40]))
 
     for bi, it in script_io.items(doc):
         if it["kind"] == "dialogue" and it["cues"] and "동일 후보" in (it["note"] or ""):
