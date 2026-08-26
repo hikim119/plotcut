@@ -224,6 +224,17 @@ def read(text, cues, log=print):
     paras = split_paragraphs(text)
     if not paras:
         raise ScriptError("빈 파일입니다.")
+    # 자막 파일을 대본 칸에 넣으면 **통과했다**(실측). 헤더가 없어 첫 문단이
+    # 제목이 되고, 나머지는 헤더 없는 블록의 대사가 되어 `00:00:04,000 -->`
+    # 같은 타임스탬프가 화면에 자막으로 떴다. 어제 「자막 칸에 넣으세요」
+    # 메시지를 넣었지만 `blocks` 가 비지 않아 그 분기를 못 탔다. 슬롯을
+    # 헷갈리는 건 처음 쓰는 사람이 제일 자주 하는 실수라 맨 앞에서 거른다.
+    if len(re.findall(r"\d\d:\d\d:\d\d[,.]\d{3}\s*-->\s*\d\d:\d\d:\d\d", text)) >= 2 \
+            or text.lstrip().startswith("WEBVTT"):
+        raise ScriptError(
+            "이건 자막 파일입니다 — 대본 칸이 아니라 **자막 칸**에 넣으세요." + "\n"
+            "  대본 칸에는 「타임라인 대본」 txt 가 들어갑니다"
+            " (블록 헤더 `[시각 ~ 시각]` 로 시작하는 파일).")
 
     title = ""
     blocks = []
@@ -303,8 +314,11 @@ def read(text, cues, log=print):
         # 헤더 줄이 그 안에 묻혀 `parse_header` 가 못 읽는다. 그런데 예전
         # 메시지는 「하나도 없습니다」라 **파일에 뻔히 보이는데 없다고 한다.**
         # 실측: 친구가 받자마자 이걸 봤고 「전 버전 오류인가」로 되물었다.
-        if _HEADER_PAT.search(text.replace("\r", "")) or re.search(
-                r"\[\s*\d{1,3}:\d{1,2}:\d{1,2}", text):
+        # 전각도 같이 본다 — 안 그러면 ［…］ 로 쓴 사람은 「하나도 없습니다」를
+        # 받는다(실측). 시 생략(`[00:04 ~ 00:12]`)도 「없다」보다 「안 나뉘어
+        # 있다」가 먼저다 — 빈 줄을 넣고 나면 그 다음 오류가 세 자리로 안내한다.
+        flat = text.replace("\r", "").translate(_FULLWIDTH)
+        if any(_HEADER_LIKE.match(ln.strip()) for ln in flat.split("\n")):
             raise ScriptError(
                 "블록 헤더는 있는데 **문단이 안 나뉘어 있습니다.**" + "\n"
                 "  빈 줄 하나가 문단 구분입니다 — 헤더·대사·나레이션 사이를"

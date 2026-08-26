@@ -790,6 +790,23 @@ def header_msg_tests():
           not isinstance(_grab(lambda: sio.read(ok, cue, log=lambda *_: None)),
                          sio.ScriptError))
 
+    # 전각 헤더 + 빈 줄 없음 — 정규화를 안 거치면 「하나도 없습니다」로 떨어졌다
+    e3 = _grab(lambda: sio.read("제목" + NL + "［00:01:00 ～ 00:01:30］" + NL
+                                + "대사 한 줄", cue, log=lambda *_: None))
+    check("전각 헤더가 붙어 있어도 「안 나뉘어」라고 말한다",
+          isinstance(e3, sio.ScriptError) and "문단이 안 나뉘어" in str(e3), str(e3)[:80])
+
+    # **자막 파일을 대본 칸에** — 예전엔 통과해서 타임스탬프가 화면에 떴다.
+    srt = ("1" + NL + "00:00:01,000 --> 00:00:03,000" + NL + "대사" + NL * 2
+           + "2" + NL + "00:00:04,000 --> 00:00:06,000" + NL + "대사" + NL)
+    e4 = _grab(lambda: sio.read(srt, cue, log=lambda *_: None))
+    check("자막 파일이면 거절한다", isinstance(e4, sio.ScriptError), repr(e4)[:60])
+    check("자막 칸에 넣으라고 말한다", "자막 칸" in str(e4), str(e4)[:80])
+    vtt = "WEBVTT" + NL * 2 + "00:00:01.000 --> 00:00:03.000" + NL + "대사" + NL
+    check("vtt 도 거절한다",
+          isinstance(_grab(lambda: sio.read(vtt, cue, log=lambda *_: None)),
+                     sio.ScriptError))
+
 
 def usererr_tests():
     """CLI 가 **프로젝트가 정의한 예외를 하나도 안 빠뜨리는가.** 자산 없이 돈다.
