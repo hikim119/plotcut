@@ -332,6 +332,10 @@ def tally(votes):
 
 
 # ── Codex 관문 — 제품 심사자가 독립 심사자와 맞는가 ──────────────────────────
+# **이 명령은 지금 쓸 데가 없다.** 순위 심사 자체가 관문에 떨어졌기 때문이다
+# (8/26: 같은 대본을 두 번 재워 τ 0.333 · 합의 1위 3편 중 1편). 재현되지 않는
+# 자를 두 개 놓고 서로 맞는지 재 봐야 의미가 없다. 조건 비교는 쌍대 대결로 한다.
+# 남겨 두는 건 나중에 **더 나은 순위 심사**를 만들었을 때 같은 자리에서 재기 위해서다.
 # 실험 심사는 sonnet(Workflow)이고 제품 심사는 Codex(`script_gen.rank_candidates`)다.
 # 실험이 순위 심사를 검증해도 그건 sonnet 의 순위다. 후보 기능의 가치는 「Codex 가
 # 고른 후보가 독립 심사자가 고른 후보와 얼마나 일치하는가」인데, 그걸 여기서 잰다.
@@ -375,6 +379,49 @@ def cmd_rank(a):
     return 0
 
 
+# ── 조건 대결 준비 ──────────────────────────────────────────────────────────
+# 순위 심사가 재현율 관문에 떨어져서(τ 0.333) 조건 비교는 **쌍대**로 돌아왔다.
+# 판 k 끼리 짝지어 A/B 파일과 정답 키를 만든다. 심사자는 두 파일만 읽으면 되고,
+# **순서를 뒤집은 두 번**을 반드시 같이 돌린다(위치 편향). A/B 배치는 판 번호로
+# 번갈아 — 한 조건이 늘 1번 자리에 서면 그 편향이 조건에 그대로 얹힌다.
+
+def cmd_duel(a):
+    t1, t2 = [t.strip() for t in a.tags.split(",")]
+    films = [f.strip() for f in a.films.split(",") if f.strip()]
+    recs = {}
+    for t in (t1, t2):
+        for r in json.loads((BENCH / ("%s.json" % t)).read_text(encoding="utf-8")):
+            if r.get("ok"):
+                recs[(t, r["film"], r["run"])] = r
+    out = BENCH / a.name
+    out.mkdir(parents=True, exist_ok=True)
+    key, made = {}, 0
+    for film in films:
+        for k in range(1, a.runs + 1):
+            r1, r2 = recs.get((t1, film, k)), recs.get((t2, film, k))
+            if not r1 or not r2:
+                print("  %s 판%d — 빠진 조건이 있어 건너뜀" % (film, k))
+                continue
+            pair = "%s_%d" % (film, k)
+            # 판이 바뀔 때마다 A/B 를 뒤집는다
+            first, second = (r1, r2) if k % 2 else (r2, r1)
+            try:
+                for side, rec in (("A", first), ("B", second)):
+                    (out / ("%s_%s.txt" % (pair, side))).write_text(
+                        render(pack_tool(rec["script"], film)), encoding="utf-8")
+            except Exception as e:                          # noqa: BLE001
+                print("  %s 건너뜀 — %s: %s" % (pair, type(e).__name__, str(e)[:50]))
+                continue
+            key[pair] = {"A": first["tag"], "B": second["tag"]}
+            made += 1
+    (out / "_key.json").write_text(json.dumps(key, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
+    print("%d쌍 · %s" % (made, out))
+    for pair, sides in sorted(key.items()):
+        print("  %-16s A=%-8s B=%s" % (pair, sides["A"], sides["B"]))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="bench")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -392,7 +439,12 @@ def main(argv=None):
     p.add_argument("--jobs", type=int, default=JOBS)
     p = sub.add_parser("pack", help="대결용 중립 형식으로 굽는다")
     p.add_argument("--tag", required=True)
-    p = sub.add_parser("rank", help="Codex 로 조건별 판 묶음의 순위를 매긴다 (관문)")
+    p = sub.add_parser("duel", help="두 조건을 판끼리 짝지어 A/B 파일과 키를 만든다")
+    p.add_argument("--tags", required=True, help="예: base3,nameN")
+    p.add_argument("--name", required=True, help="만들 폴더 이름 (예: duel5)")
+    p.add_argument("--films", default="father,robber,gentleman")
+    p.add_argument("--runs", type=int, default=3)
+    p = sub.add_parser("rank", help="[보류] 순위 심사는 재현율 관문에 떨어졌다 — 쌍대를 써라")
     p.add_argument("--tags", required=True, help="예: base3,nameN,selfS")
     p.add_argument("--films", default="gentleman")
     p.add_argument("--runs", type=int, default=3)
@@ -402,6 +454,8 @@ def main(argv=None):
         return cmd_gen(a)
     if a.cmd == "pack":
         return cmd_pack(a)
+    if a.cmd == "duel":
+        return cmd_duel(a)
     if a.cmd == "rank":
         return cmd_rank(a)
     return 1
