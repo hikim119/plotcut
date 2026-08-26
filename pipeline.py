@@ -412,13 +412,16 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
         # 중단은 실패가 아니라 취소다 — 진단할 게 없으니 만든 폴더째 치운다.
         _discard_dir(rdir)
         raise Stopped() from None
-    except script_gen.GenError:
+    except script_gen.GenError as e:
         # 에이전트가 안 깔렸거나 자막을 못 읽으면 **에이전트가 돌기도 전에**
         # 터진다. 그러면 폴더가 텅 빈 채로 남아 시도할 때마다 쌓인다(실측).
         # `_discard_dir` 은 못 쓴다 — 그건 `생성중_*` 을 무시하고 지우므로
         # 진단에 꼭 필요한 **에이전트 로그까지 날린다.** 완전히 빈 것만 치운다.
+        # 사용량 한도만은 예외다 — 원인을 이미 알고(메시지가 말한다) 로그에
+        # 진단할 게 없는데, 다시 시도할 때마다 폴더가 쌓인다(실측: 한 배치에 6개).
         try:
-            if rdir is not None and not any(Path(rdir).iterdir()):
+            if rdir is not None and (isinstance(e, script_gen.QuotaError)
+                                     or not any(Path(rdir).iterdir())):
                 shutil.rmtree(rdir, ignore_errors=True)
         except OSError:
             pass

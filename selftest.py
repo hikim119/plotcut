@@ -996,6 +996,23 @@ def quota_tests():
         check("runner.json 을 고치라고 하지 않는다", "runner.json" not in msg)
         check("언제 다시 되는지 알려 준다", "8:40 PM" in msg)
         eq("사다리를 더 내려가지 않는다", QuotaPopen.tries, 1)
+
+        # 한도 실패는 진단할 게 없다 — 로그 한 장짜리 폴더를 안 남긴다
+        import pipeline
+        import cli
+        dirs0 = {q.name for q in (ROOT / "results").glob("selftest_한도*")}
+        try:
+            pipeline.run_script(str(srt), project_name="selftest_한도폴더",
+                                log=lambda *_: None)
+            err = None
+        except sg.GenError as e:
+            err = e
+        check("한도는 QuotaError 로 구분된다", isinstance(err, sg.QuotaError))
+        check("도구가 사용자 말로 옮겨 준다", "사용량 한도" in cli.user_message(err))
+        left = {q.name for q in (ROOT / "results").glob("selftest_한도*")} - dirs0
+        check("빈 결과 폴더를 안 남긴다", not left, str(left))
+        for name in left:
+            shutil.rmtree(ROOT / "results" / name, ignore_errors=True)
     finally:
         sg.subprocess.Popen = real
         if before is None:

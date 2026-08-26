@@ -100,6 +100,12 @@ class GenStopped(GenError):
     안 그러면 화면에 '✘ GenError: 중단되었습니다.' 로 오류처럼 뜬다."""
 
 
+class QuotaError(GenError):
+    """에이전트 CLI 가 자기 사용량 한도로 거절했다. 도구·설정 문제가 아니라서
+    진단할 게 없다 — pipeline 이 남은 폴더를 치운다(안 그러면 다시 시도할 때마다
+    로그 한 장짜리 폴더가 쌓인다. 실측 8/26: 한 배치에 6개)."""
+
+
 # ── 러너 찾기 ───────────────────────────────────────────────────────────────
 
 def _load_config():
@@ -938,7 +944,7 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
         return out_path
 
     if _looks_quota(last):
-        raise GenError(
+        raise QuotaError(
             "%s 의 **사용량 한도**에 걸렸습니다%s.\n"
             "  도구나 설정 문제가 아닙니다 — 에이전트 CLI 자체가 거절했습니다.\n"
             "  · 잠시 뒤에 다시 돌려 보세요\n"
