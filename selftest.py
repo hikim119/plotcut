@@ -494,6 +494,10 @@ def _canon_prompt(text):
 
     그래서 **문체 규칙 블록만** 찍는다. 프롬프트의 61%이고, 변형이 건드리는
     곳이고, 경로도 조건 분기도 없다 — 문구가 바뀌면 그것만으로 값이 바뀐다.
+
+    **맨 끝의 이름 블록도 같이 찍는다.** 그건 문체 블록 밖에 있지만(자리가
+    효과를 만든다 — 8/27 실험) 경로가 없어 환경을 안 탄다. 문체 블록만 찍던
+    시절엔 이 블록을 통째로 지워도 해시가 안 변했다.
     """
     lines = text.split(chr(10))
     try:
@@ -503,7 +507,12 @@ def _canon_prompt(text):
                  if "영화의 말투를 따라간다" in ln)
     except StopIteration:
         return "문체 블록을 못 찾았다"
-    return chr(10).join(lines[i:j + 1])
+    try:
+        n = next(k for k, ln in enumerate(lines) if ln.startswith("**이름 —"))
+        name_block = lines[n:n + 9]
+    except StopIteration:
+        name_block = ["이름 블록이 없다"]
+    return chr(10).join(lines[i:j + 1] + name_block)
 
 
 def variant_tests():
@@ -532,11 +541,25 @@ def variant_tests():
     #   순서를 뒤집어도 18/18 쌍이 같은 답. 미리 정한 관문 2/3 을 만족한다.
     #   앞선 두 판(58% · 58%)에서 robber 만 지던 원인이 「한 인물 두 이름」이었고
     #   (심사평: 내레의 '티폴'과 대사의 '테런스'), 그 한 줄을 넣자 robber 가
-    #   4:8 → 8:4 로 뒤집혔다. AGENTS.md 실험 절 참조.
-    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "51fa24e101c5f586")
+    #   4:8 → 8:4 로 뒤집혔다.
+    #   **자리가 효과를 만든다.** 처음엔 이 문구를 문체 블록 안에 심었는데,
+    #   실험이 이긴 판(`--extra`, 맨 끝)과 붙여 보니 **12:0 으로 전패**했다
+    #   (순서를 뒤집어도 6/6 동일). 그래서 맨 끝(사용자 지시 바로 앞)에 둔다.
+    #   AGENTS.md 실험 절 참조.
+    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "30a6d30e7b42086f")
     eq("기본에 들어간 변형이 없다", sg._SHIPPED, ())
     for _k in ("누가 말하는지 알게 해라", "대사를 잘게 끊어라"):
         check("실험 조항이 기본에 안 섞였다: %s" % _k, _k not in base)
+    # 이름 블록은 **맨 끝**이어야 한다 — 문체 블록 안으로 옮기면 12:0 으로 진다.
+    _lines = base.strip().splitlines()
+    _n = next((k for k, ln in enumerate(_lines) if ln.startswith("**이름 —")), -1)
+    check("이름 블록이 프롬프트 맨 끝에 있다", _n >= 0 and _n >= len(_lines) - 10,
+          "%d / %d" % (_n, len(_lines)))
+    _with = sg.build_prompt("x.srt", "o.txt", 180, extra="잭 이야기만")
+    check("사용자 지시는 그보다도 뒤 — 제일 세게 걸린다",
+          _with.strip().splitlines()[-1].startswith("추가 지시(최우선)"))
+    for _k in ("한 이름으로만", "지식을 이름에", "처음 말하기 전에"):
+        check("이름 규칙이 살아 있다: %s" % _k, _k in base)
     check("변형을 안 주면 변형 코드가 안 돈다", sg.build_prompt(
         "x.srt", "o.txt", 180, variant=None) == base)
     for v in sg.VARIANTS:
