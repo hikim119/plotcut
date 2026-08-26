@@ -197,8 +197,50 @@ _NO_WRITE = (
 )
 
 
-def _looks_read_only(out):
+# 에이전트 CLI 가 **자기 사용량 한도**에 걸려 즉시 끝난 흔적. 실측(8/26): Codex 가
+# 「You've hit your usage limit ... try again at 8:40 PM」만 찍고 4초 만에 죽었는데,
+# 배너에 `sandbox: read-only` 가 있어서 아래 `_NO_WRITE` 에 걸렸다 — 도구가 권한
+# 문제라고 오진하고 runner.json 을 고치라고 안내했다. 한도가 먼저다.
+_QUOTA = (
+    "usage limit", "rate limit", "rate_limit", "quota", "too many requests",
+    "insufficient_credit", "insufficient credits", "out of credits",
+    "사용량 한도", "요청 한도", "한도를 초과", "크레딧",
+)
+# 한도 안내에 흔히 붙는 재시도 시각 — 그대로 사용자에게 보여 준다.
+# Codex 배너(`sandbox: read-only`, `approval: never` …)는 **모든 실행에 찍힌다.**
+# 실패 원인의 증거가 아니므로 권한 판정에서 뺀다. (이 모듈은 `re` 를 안 쓴다 —
+# 두 가지 다 앞부분 비교로 충분하다.)
+_BANNER_KEYS = ("workdir", "model", "provider", "approval", "sandbox",
+                "reasoning", "session id", "--------")
+
+
+def _is_banner(line):
+    head = line.strip().lower()
+    return any(head.startswith(k) for k in _BANNER_KEYS)
+
+
+def _looks_quota(out):
     low = (out or "").lower()
+    return any(k in low for k in _QUOTA)
+
+
+def _quota_hint(out):
+    """「try again at 8:40 PM」 → 「 — 8:40 PM 이후에 다시 됩니다」"""
+    for ln in (out or "").splitlines():
+        low = ln.lower()
+        i = low.find("try again at")
+        if i < 0:
+            i = low.find("try again in")
+        if i >= 0:
+            when = ln[i + len("try again at"):].split(".")[0].strip()
+            if when:
+                return " — %s 이후에 다시 됩니다" % when[:40]
+    return ""
+
+
+def _looks_read_only(out):
+    body = [l for l in (out or "").splitlines() if not _is_banner(l)]
+    low = chr(10).join(body).lower()
     return any(k in low for k in _NO_WRITE)
 
 
@@ -789,6 +831,9 @@ def run_prompt_file(ptxt, work, *, done, key, exe, spec, timeout=1800,
                 progress(1.0)
             return True, out, t0
         low = last.lower()
+        if _looks_quota(last):
+            # 인자 문제가 아니다 — 다음 단으로 내려가 봐야 같은 벽이다.
+            break
         if attempt < len(spec["argv"]) and any(k in low for k in _UNKNOWN_OPT):
             log("  (인자 조합을 바꿔 다시 시도합니다)")
             continue
@@ -892,6 +937,15 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
             log("    " + l.strip()[:110])
         return out_path
 
+    if _looks_quota(last):
+        raise GenError(
+            "%s 의 **사용량 한도**에 걸렸습니다%s.\n"
+            "  도구나 설정 문제가 아닙니다 — 에이전트 CLI 자체가 거절했습니다.\n"
+            "  · 잠시 뒤에 다시 돌려 보세요\n"
+            "  · 다른 에이전트가 깔려 있으면 그걸로 돌릴 수 있습니다 (설정에서 바꾸세요)\n"
+            "  에이전트 출력(끝부분):\n%s"
+            % (spec["label"], _quota_hint(last),
+               "\n".join(("    " + l) for l in last.splitlines()[-6:])))
     if _looks_read_only(last):
         raise GenError(
             "%s 가 **읽기 전용**으로 돌아 대본 파일을 만들지 못했습니다.\n"

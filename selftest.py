@@ -429,6 +429,7 @@ def dialogue_tests():
     requote_tests()
     runner_core_tests()
     candidates_tests()
+    quota_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -932,6 +933,76 @@ def width_error_tests():
           'st.get("too_wide")' not in inspect.getsource(cli.cmd_check))
     check("pipeline 에도 없다 (파서 하나가 정본)",
           "too_wide" not in inspect.getsource(pipeline))
+
+
+def quota_tests():
+    """에이전트 사용량 한도를 권한 문제로 오진하지 않는다 (실측 8/26).
+
+    Codex 가 「You've hit your usage limit … try again at 8:40 PM」만 찍고 4초 만에
+    죽었는데, 배너의 `sandbox: read-only` 가 `_NO_WRITE` 에 걸려 도구가 「읽기 전용」
+    이라며 runner.json 을 고치라고 안내했다. 원인과 안내가 완전히 어긋난다.
+    실험 9판 중 6판이 이 메시지를 받았고, 친구도 그대로 받게 된다.
+    """
+    import script_gen as sg
+    print()
+    print("[35] 사용량 한도")
+    NL = chr(10)
+    banner = NL.join([
+        "OpenAI Codex v0.147.0", "--------",
+        "workdir: C:" + chr(92) + "x", "model: gpt-5.6-sol", "provider: openai",
+        "approval: never", "sandbox: read-only", "reasoning effort: none",
+        "session id: 01a0", "--------", "user", "지시서를 읽고 수행해라."])
+    quota = banner + NL + ("ERROR: You've hit your usage limit. Upgrade to Pro, "
+                           "or try again at 8:40 PM.")
+    check("한도 문구를 한도로 본다", sg._looks_quota(quota))
+    eq("재시도 시각을 뽑아 준다", sg._quota_hint(quota), " — 8:40 PM 이후에 다시 됩니다")
+    check("배너의 read-only 는 권한 근거가 아니다", not sg._looks_read_only(quota))
+    check("진짜 권한 문구는 여전히 잡는다",
+          sg._looks_read_only(banner + NL + "현재 세션이 읽기 전용이라 파일 생성이 차단됐습니다"))
+    check("평범한 실패는 둘 다 아니다", not sg._looks_quota(banner)
+          and not sg._looks_read_only(banner))
+
+    # 끝까지 — 한도로 죽으면 사다리를 더 안 내려가고, 안내가 한도를 가리킨다.
+    # 출력에 **한도와 인자 오류가 같이** 있는 판을 쓴다: 실측 로그의 마지막 단이
+    # 맨 `exec`(배너 `approval: never`)였으니 실제로 끝까지 내려갔다는 뜻이고,
+    # 한도 벽에는 어느 단으로 내려가도 같은 벽이다 — 4배 기다릴 이유가 없다.
+    quota = quota + NL + "error: unexpected argument '--approve-for-me'"
+
+    class QuotaPopen:
+        tries = 0
+        def __init__(self, argv, **kw):
+            QuotaPopen.tries += 1
+            kw["stdout"].write(quota.encode("utf-8"))
+        def poll(self):
+            return 0
+
+    real = sg.subprocess.Popen
+    timing = sg.TIMING
+    before = timing.read_text(encoding="utf-8") if timing.exists() else None
+    td = pathlib.Path(tempfile.mkdtemp())
+    try:
+        sg.subprocess.Popen = QuotaPopen
+        srt = td / "x.srt"
+        srt.write_text("1" + NL + "00:00:01,000 --> 00:00:03,000" + NL + "대사" + NL,
+                       encoding="utf-8")
+        try:
+            sg.generate(str(srt), td / "out.txt", target_s=60, work_dir=td,
+                        log=lambda *_: None)
+            msg = ""
+        except sg.GenError as e:
+            msg = str(e)
+        check("한도라고 말한다", "사용량 한도" in msg, msg[:70])
+        check("권한 문제라고 하지 않는다", "읽기 전용" not in msg)
+        check("runner.json 을 고치라고 하지 않는다", "runner.json" not in msg)
+        check("언제 다시 되는지 알려 준다", "8:40 PM" in msg)
+        eq("사다리를 더 내려가지 않는다", QuotaPopen.tries, 1)
+    finally:
+        sg.subprocess.Popen = real
+        if before is None:
+            timing.unlink(missing_ok=True)
+        else:
+            timing.write_text(before, encoding="utf-8")
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def candidates_tests():
