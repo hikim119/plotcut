@@ -695,17 +695,14 @@ def _inside_workdir(path):
         return False
 
 
-def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
-             prefer=None,
-             work_dir=None, timeout=1800, log=print, stop=None, progress=None,
-             variant=None, keep_log=False):
-    """에이전트를 돌려 대본 txt를 만든다. 반환: Path(out_path)."""
+def _resolve_runner(prefer=None):
+    """쓸 러너 하나를 확정한다. 없거나 로그인 안 됐으면 GenError."""
     found = find_runner(prefer)
     if not found:
         raise GenError(
-            "대본을 만들 에이전트를 찾을 수 없습니다.\n"
-            "  " + RUNNERS["codex"]["install"] + "\n"
-            "  설치 후에도 안 잡히면 PlotCut/runner.json 에 경로를 적으세요:\n"
+            "대본을 만들 에이전트를 찾을 수 없습니다." + chr(10) +
+            "  " + RUNNERS["codex"]["install"] + chr(10) +
+            "  설치 후에도 안 잡히면 PlotCut/runner.json 에 경로를 적으세요:" + chr(10) +
             '  {"runner": "codex", "exe": "C:/…/codex.cmd"}')
     key, exe, spec = found
     # 로그인 안 된 채로 돌리면 CLI가 401 을 내는데, 그 메시지는 인자 사다리를 타고
@@ -714,10 +711,97 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
     # 뜻이다. `not None` 은 참이라 runner.json 으로 지정한 커스텀 러너가 막힌다.
     if logged_in(spec) is False:
         raise GenError(
-            "%s 에 로그인되어 있지 않습니다.\n"
-            "  %s\n"
-            "  다른 에이전트가 로그인돼 있으면 GUI의 '대본 생성기'에서 바꿔 쓰세요."
-            % (spec["label"], spec.get("login", "")))
+            "%s 에 로그인되어 있지 않습니다." % spec["label"] + chr(10) +
+            "  %s" % spec.get("login", "") + chr(10) +
+            "  다른 에이전트가 로그인돼 있으면 GUI의 '대본 생성기'에서 바꿔 쓰세요.")
+    return key, exe, spec
+
+
+AGENT_LOG = "생성중_에이전트로그.txt"
+
+
+def run_prompt_file(ptxt, work, *, done, key, exe, spec, timeout=1800,
+                    timing_key=None, extra_argv=None, log=print, stop=None,
+                    progress=None):
+    """지시서 파일 하나를 에이전트에게 주고 끝날 때까지 돈다. → (성공, 출력 전문, t0)
+
+    `generate()` 에서 떼어낸 러너 코어다. 계약은 한 줄이다 — 「이 파일을 읽고 수행해라」.
+    대본에 대해 아무것도 모르므로 **판정·순위 같은 다른 프롬프트에도 그대로 쓴다.**
+
+    · `done()` 이 참이면 성공. 무엇이 성공인지는 호출자가 안다(대본은 초안 파일 존재,
+      판정은 결과 파일 존재).
+    · 사다리(`spec["argv"]`)는 `_UNKNOWN_OPT` 에 걸릴 때만 다음 단으로 — 인자 호환성
+      문제지 프롬프트와 무관하다.
+    · `timing_key` 를 주면 그 키로 진행률 추정을 기록한다. 판정처럼 **짧은 실행은
+      None 으로** — 대본 예상 450초에 30초가 섞이면 진행률이 30초 만에 97%를 찍는다.
+    · `extra_argv` 는 러너별 추가 인자 `{"codex": [...]}` — `{prompt}` 바로 앞에 끼운다.
+      판정은 `--output-schema` `-o` `-s read-only` 를 여기로 준다.
+    · 프롬프트는 **파일로** 넘긴다. 여러 줄 문자열을 명령행 인자로 주면 codex.cmd 같은
+      배치 래퍼가 %* 로 받으면서 줄바꿈이 깨진다(실측).
+    · 출력은 파이프가 아니라 **파일**(`AGENT_LOG`)로 받는다 — 파이프는 버퍼가 차면
+      자식이 멈춘다(교착). 성공·실패 뒤 정리는 호출자 몫이다.
+    """
+    prompt = ('"%s" 파일을 읽고, 거기 적힌 지시를 그대로 순서대로 수행해라.' % ptxt)
+    extra = list((extra_argv or {}).get(key, []))
+    exp = expected_secs(timing_key) if timing_key else 60.0
+    if timing_key:
+        log("  (지난 실행 기준 %d분쯤 걸립니다)" % max(1, round(exp / 60)))
+    outfile = Path(work) / AGENT_LOG
+    last, t0 = "", time.time()
+    for attempt, template in enumerate(spec["argv"], start=1):
+        if stop is not None and stop.is_set():
+            raise GenStopped("중단되었습니다.")
+        tpl = list(template)
+        if extra and "{prompt}" in tpl:
+            i = tpl.index("{prompt}")
+            tpl[i:i] = extra
+        argv = [exe] + [prompt if a == "{prompt}" else a for a in tpl]
+        t0 = time.time()
+        # subprocess.run 은 끝날 때까지 블록되므로 진행률도 못 올리고 중단도 못 한다.
+        # Popen 으로 띄우고 짧게 폴링한다.
+        try:
+            with open(outfile, "wb") as fh:
+                proc = subprocess.Popen(
+                    argv, cwd=str(ROOT.parent), stdin=subprocess.DEVNULL,
+                    stdout=fh, stderr=subprocess.STDOUT,
+                    creationflags=_NO_WINDOW, env=_child_env())
+                while proc.poll() is None:
+                    if stop is not None and stop.is_set():
+                        _kill_tree(proc)
+                        raise GenStopped("중단되었습니다.")
+                    el = time.time() - t0
+                    if el > timeout:
+                        _kill_tree(proc)
+                        raise GenError("에이전트가 %d분 안에 끝내지 못했습니다."
+                                       % (timeout // 60))
+                    if progress:
+                        # 97%에서 멈춰 세운다 — 다 됐다고 거짓말하지 않는다
+                        progress(min(0.97, el / max(1.0, exp)))
+                    time.sleep(0.4)
+        except FileNotFoundError as e:
+            raise GenError("에이전트를 실행할 수 없습니다: %s" % exe) from e
+        out = _dec(outfile.read_bytes() if outfile.exists() else b"")
+        last = out.strip()
+        if done():
+            if timing_key:
+                record_secs(timing_key, time.time() - t0)
+            if progress:
+                progress(1.0)
+            return True, out, t0
+        low = last.lower()
+        if attempt < len(spec["argv"]) and any(k in low for k in _UNKNOWN_OPT):
+            log("  (인자 조합을 바꿔 다시 시도합니다)")
+            continue
+        break
+    return False, last, t0
+
+
+def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
+             prefer=None,
+             work_dir=None, timeout=1800, log=print, stop=None, progress=None,
+             variant=None, keep_log=False):
+    """에이전트를 돌려 대본 txt를 만든다. 반환: Path(out_path)."""
+    key, exe, spec = _resolve_runner(prefer)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # 기존 파일은 **손대지 않는다.** 사람이 고친 대본을 덮어쓰면 되돌릴 수 없다.
@@ -772,81 +856,41 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
     with open(ptxt, "w", encoding="utf-8", newline="\n") as f:
         f.write(build_prompt(sub_for_agent, staged, target_s, extra, movie_title,
                              plot_path=staged_plot, variant=variant))
-    prompt = ('"%s" 파일을 읽고, 거기 적힌 지시를 그대로 순서대로 수행해라.' % ptxt)
+    def _done():
+        return staged.exists() and staged.stat().st_size > 0
 
     log("  %s 로 대본을 만듭니다 — 몇 분 걸립니다" % spec["label"])
     log("  (%s)" % exe)
-
-    last = ""
-    exp = expected_secs(key)
-    log("  (지난 실행 기준 %d분쯤 걸립니다)" % max(1, round(exp / 60)))
-    outfile = work / "생성중_에이전트로그.txt"
-    for attempt, template in enumerate(spec["argv"], start=1):
-        if stop is not None and stop.is_set():
-            raise GenStopped("중단되었습니다.")
-        argv = [exe] + [prompt if a == "{prompt}" else a for a in template]
-        t0 = time.time()
-        # subprocess.run 은 끝날 때까지 블록되므로 진행률도 못 올리고 중단도 못 한다.
-        # Popen 으로 띄우고 짧게 폴링한다. 출력은 **파일로** 받는다 —
-        # 파이프로 받으면 버퍼가 차면서 자식이 멈춘다(교착).
-        try:
-            with open(outfile, "wb") as fh:
-                proc = subprocess.Popen(
-                    argv, cwd=str(ROOT.parent), stdin=subprocess.DEVNULL,
-                    stdout=fh, stderr=subprocess.STDOUT,
-                    creationflags=_NO_WINDOW, env=_child_env())
-                while proc.poll() is None:
-                    if stop is not None and stop.is_set():
-                        _kill_tree(proc)
-                        raise GenStopped("중단되었습니다.")
-                    el = time.time() - t0
-                    if el > timeout:
-                        _kill_tree(proc)
-                        raise GenError("에이전트가 %d분 안에 끝내지 못했습니다."
-                                       % (timeout // 60))
-                    if progress:
-                        # 97%에서 멈춰 세운다 — 다 됐다고 거짓말하지 않는다
-                        progress(min(0.97, el / max(1.0, exp)))
-                    time.sleep(0.4)
-        except FileNotFoundError as e:
-            raise GenError("에이전트를 실행할 수 없습니다: %s" % exe) from e
-        out = _dec(outfile.read_bytes() if outfile.exists() else b"")
-        last = out.strip()
-
-        if staged.exists() and staged.stat().st_size > 0:
-            record_secs(key, time.time() - t0)
-            if progress:
-                progress(1.0)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(staged), str(out_path))
-            # 줄거리는 있으면 좋고 없어도 그만이다 — 대본이 나온 게 성공이다.
-            if staged_plot.exists() and staged_plot.stat().st_size > 0:
-                shutil.move(str(staged_plot),
-                            str(out_path.parent / PLOT_NAME))
-            else:
-                log("  (줄거리 파일은 안 나왔습니다 — 대본은 정상입니다)")
-            # 성공했으면 중간 파일은 남길 이유가 없다 (실패 때만 남겨 진단에 쓴다).
-            # 실험에선 남긴다 — 에이전트가 자기 점검을 **실제로 했는지**는 로그의
-            # 편집 이벤트(썼다 → check → 다시 고쳤다)로만 알 수 있다. `생성중_` 접두어를
-            # 떼야 `_discard_dir` 이 중간 파일이 아니라 산출물로 본다.
-            ptxt.unlink(missing_ok=True)
-            if keep_log and outfile.exists():
-                shutil.move(str(outfile), str(out_path.parent / "에이전트로그.txt"))
-            else:
-                outfile.unlink(missing_ok=True)
-            if sub_for_agent != sub_in:
-                sub_for_agent.unlink(missing_ok=True)
-            log("  대본 생성 완료 (%.0f초)" % (time.time() - t0))
-            tail = [l for l in out.splitlines() if l.strip()][-3:]
-            for l in tail:
-                log("    " + l.strip()[:110])
-            return out_path
-
-        low = last.lower()
-        if attempt < len(spec["argv"]) and any(k in low for k in _UNKNOWN_OPT):
-            log("  (인자 조합을 바꿔 다시 시도합니다)")
-            continue
-        break
+    outfile = work / AGENT_LOG
+    ok, out, t0 = run_prompt_file(ptxt, work, done=_done, key=key, exe=exe, spec=spec,
+                                  timeout=timeout, timing_key=key,
+                                  log=log, stop=stop, progress=progress)
+    last = out.strip()
+    if ok:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(staged), str(out_path))
+        # 줄거리는 있으면 좋고 없어도 그만이다 — 대본이 나온 게 성공이다.
+        if staged_plot.exists() and staged_plot.stat().st_size > 0:
+            shutil.move(str(staged_plot),
+                        str(out_path.parent / PLOT_NAME))
+        else:
+            log("  (줄거리 파일은 안 나왔습니다 — 대본은 정상입니다)")
+        # 성공했으면 중간 파일은 남길 이유가 없다 (실패 때만 남겨 진단에 쓴다).
+        # 실험에선 남긴다 — 에이전트가 자기 점검을 **실제로 했는지**는 로그의
+        # 편집 이벤트(썼다 → check → 다시 고쳤다)로만 알 수 있다. `생성중_` 접두어를
+        # 떼야 `_discard_dir` 이 중간 파일이 아니라 산출물로 본다.
+        ptxt.unlink(missing_ok=True)
+        if keep_log and outfile.exists():
+            shutil.move(str(outfile), str(out_path.parent / "에이전트로그.txt"))
+        else:
+            outfile.unlink(missing_ok=True)
+        if sub_for_agent != sub_in:
+            sub_for_agent.unlink(missing_ok=True)
+        log("  대본 생성 완료 (%.0f초)" % (time.time() - t0))
+        tail = [l for l in out.splitlines() if l.strip()][-3:]
+        for l in tail:
+            log("    " + l.strip()[:110])
+        return out_path
 
     if _looks_read_only(last):
         raise GenError(

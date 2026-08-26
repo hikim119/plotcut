@@ -427,6 +427,7 @@ def dialogue_tests():
     width_error_tests()
     buildpath_tests()
     requote_tests()
+    runner_core_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -930,6 +931,80 @@ def width_error_tests():
           'st.get("too_wide")' not in inspect.getsource(cli.cmd_check))
     check("pipeline 에도 없다 (파서 하나가 정본)",
           "too_wide" not in inspect.getsource(pipeline))
+
+
+def runner_core_tests():
+    """`run_prompt_file` 계약 — `generate()` 에서 떼어낸 러너 코어. 자산 없이 돈다.
+
+    [9] 는 실패 경로만 본다(dud 러너). 여기서는 **성공 경로**를 가짜 Popen 으로
+    돈다: 초안 파일이 생기면 성공, keep_log 면 로그가 산출물로 남고, 중간 파일은
+    안 남고, timing 은 대본 키로만 기록되고, 판정용(timing_key=None)은 timing 을
+    안 건드리고, extra_argv 는 `{prompt}` 바로 앞에 끼워진다.
+    """
+    import re
+    import script_gen as sg
+    print()
+    print("[33] 러너 코어")
+    NL = chr(10)
+
+    class FakePopen:
+        seen = []
+        def __init__(self, argv, **kw):
+            FakePopen.seen.append(argv)
+            m = re.search(r'"([^"]+생성중_지시서' + chr(92) + '.txt)"', " ".join(argv))
+            work = pathlib.Path(m.group(1)).parent
+            (work / "생성중_초안.txt").write_text(
+                "제목" + NL * 2 + "[00:00:01 ~ 00:00:05]" + NL * 2 + "가짜 대사" + NL,
+                encoding="utf-8")
+            kw["stdout"].write(b"fake agent ok" + chr(10).encode())
+        def poll(self):
+            return 0
+
+    real_popen = sg.subprocess.Popen
+    timing = sg.TIMING
+    before = timing.read_text(encoding="utf-8") if timing.exists() else None
+    td = pathlib.Path(tempfile.mkdtemp())
+    try:
+        sg.subprocess.Popen = FakePopen
+        srt = td / "x.srt"
+        srt.write_text("1" + NL + "00:00:01,000 --> 00:00:03,000" + NL + "대사" + NL,
+                       encoding="utf-8")
+        logs = []
+        out = sg.generate(str(srt), td / "out.txt", target_s=60, work_dir=td,
+                          keep_log=True, log=logs.append)
+        check("성공하면 대본 경로를 돌려준다", out.exists(), str(out))
+        check("keep_log 면 로그가 산출물 이름으로 남는다", (td / "에이전트로그.txt").exists())
+        check("중간 파일은 안 남는다",
+              not [q.name for q in td.iterdir() if q.name.startswith("생성중_")])
+        check("진행률 기준 로그가 있다", any("지난 실행 기준" in l for l in logs))
+        check("완료 로그가 있다", any("대본 생성 완료" in l for l in logs))
+        after = timing.read_text(encoding="utf-8") if timing.exists() else None
+        check("대본은 timing 을 기록한다", before != after)
+
+        key, exe, spec = sg._resolve_runner()
+        b2 = timing.read_text(encoding="utf-8")
+        ptxt = td / "생성중_지시서.txt"
+        ptxt.write_text("x", encoding="utf-8")
+        FakePopen.seen.clear()
+        ok, txt, _ = sg.run_prompt_file(ptxt, td, done=lambda: True, key=key, exe=exe,
+                                        spec=spec, timing_key=None,
+                                        extra_argv={key: ["-o", "R.txt"]},
+                                        log=lambda *_: None)
+        check("done 이 참이면 성공", ok)
+        check("timing_key=None 이면 timing 불변", timing.read_text(encoding="utf-8") == b2)
+        argv = FakePopen.seen[-1]
+        i = argv.index("-o")
+        check("extra_argv 는 {prompt} 바로 앞에 선다", argv[i + 2].startswith('"'), str(argv[-3:]))
+        ok2, txt2, _ = sg.run_prompt_file(ptxt, td, done=lambda: False, key=key, exe=exe,
+                                          spec=spec, timing_key=None, log=lambda *_: None)
+        check("done 이 거짓이면 실패 + 출력 전달", (not ok2) and "fake agent" in txt2)
+    finally:
+        sg.subprocess.Popen = real_popen
+        if before is None:
+            timing.unlink(missing_ok=True)
+        else:
+            timing.write_text(before, encoding="utf-8")
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def requote_tests():
