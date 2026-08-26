@@ -1045,6 +1045,11 @@ def candidates_tests():
                 kw["stdout"].write(b"judge")
             else:
                 st["gen"] += 1
+                if st["mode"] == "quota" and st["gen"] >= 2:
+                    kw["stdout"].write(("sandbox: read-only" + NL
+                                        + "ERROR: You've hit your usage limit. "
+                                          "try again at 8:40 PM.").encode("utf-8"))
+                    return
                 k = 1 if st["mode"] == "same" else st["gen"]
                 (work / "생성중_초안.txt").write_text(
                     "제목" + NL * 2 + "[00:00:01 ~ 00:00:20]" + NL * 2
@@ -1091,6 +1096,16 @@ def candidates_tests():
         made.append(r["results_dir"])
         check("심사 실패면 후보 1 + 계속 진행", any("심사 실패" in l for l in logs)
               and "대사 1 줄이야" in pathlib.Path(r["script_path"]).read_text(encoding="utf-8"))
+
+        # 후보 2에서 한도에 걸려도 후보 1을 버리지 않는다 (실측 8/26 계열)
+        st.update(gen=0, judge=0, mode="quota"); logs.clear()
+        r = pipeline.run_script(str(srt), project_name="selftest_후보한도", candidates=3,
+                                log=logs.append)
+        made.append(r["results_dir"])
+        check("후보 2 실패해도 후보 1로 끝까지 간다",
+              pathlib.Path(r["script_path"]).exists()
+              and any("이미 나온 후보 1개로 계속" in l for l in logs))
+        check("왜 실패했는지 말한다", any("사용량 한도" in l for l in logs))
 
         # 순위 파싱 — 순열이 아니면 버린다, JSON 주변 잡글은 허용
         f = td / "r.json"

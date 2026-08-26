@@ -326,6 +326,15 @@ def _pick_candidate(srt_path, rdir, out, n, gen, prefer, offset_s, fps_scale,
                 log("  중단 — 이미 나온 후보 %d개 중 1번을 씁니다" % len(done))
                 break
             raise
+        except script_gen.GenError as e:
+            # 이미 나온 후보가 있으면 **버리지 않는다.** 실측(8/26): 배치 도중
+            # Codex 사용량 한도에 걸려 뒷판이 전멸했다. 후보 2에서 그 벽을 만났다고
+            # 잘 나온 후보 1까지 잃는 건 사용자에게 순손실이다.
+            if done:
+                log("  후보 %d 실패 — %s" % (k, str(e).splitlines()[0][:70]))
+                log("  이미 나온 후보 %d개로 계속합니다" % len(done))
+                break
+            raise
     if len(done) == 1:
         winner, why = 0, ""
     else:
