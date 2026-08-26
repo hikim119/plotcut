@@ -244,6 +244,16 @@ def cmd_check(a):
           % (st["by_sig"], st["by_merge"], st["by_diff"], _tm, st["demoted"]))
     # `#a-b` 폭 위반과 헤더 섞임은 이제 `script_io.read` 가 **ScriptError 로**
     # 던진다 — check·build·GUI 가 같은 곳에서 멈추게. 여기엔 검사가 없다.
+    # 같은 큐를 두 번 인용한 대사 문단 — 훅으로 앞에 뺀 대사를 제자리에서 또 쓴 것이다.
+    # 22개 벤치 대본을 다시 재니 **진 판이 전부 이걸 갖고 있었다**(shipped gentleman 2 ·
+    # base2 gentleman 4 · v1 father 2), 심사평도 「2~3줄이 36~37줄에서 그대로 반복」.
+    # 유저 레퍼런스는 0. 채택 3조건(정답 통과·네거티브 존재·겹침 없음)을 만족한다.
+    # ✘ 여야 프롬프트의 check 루프(최대 5회)가 스스로 고친다 — 그게 이 검사의 효과다.
+    _dup = _requoted(doc)
+    if _dup:
+        errors.append(
+            "같은 대사를 두 번 인용한 문단이 %d쌍 있습니다 — 훅으로 앞에 뺀 대사는 "
+            "제자리에서 다시 쓰지 마세요: %s" % (len(_dup), " / ".join(_dup)[:80]))
     if st.get("time_mismatch") or st.get("time_nocue"):
         errors.append(
             "`@시각` 대본의 대사 %d개가 그 시각의 자막과 다릅니다 — "
@@ -449,6 +459,9 @@ def cmd_check(a):
                 warns.append("나레이션 길이 %d자: %s" % (len(n["text"]), n["text"][:30]))
         for name, n in _unknown_names(nars, cues):
             notes.append("'%s' 는 자막에 없는 이름입니다 (%d회 사용)." % (name, n))
+        for name in _late_names(doc):
+            notes.append("'%s' 는 대본 마지막 25%%에서 처음 등장합니다 — 앞에서 "
+                         "역할이나 이름으로 소개했는지 확인하세요." % name)
 
     # ── 마지막 문단 — 나레이션으로 끝내지 않는다 ─────────────────────────
     # **길이 검사는 뺐다.** 붙였다가 되물렀다 — 근거가 오염돼 있었다.
@@ -583,6 +596,57 @@ def _unknown_names(nars, cues):
             count[stem] = count.get(stem, 0) + 1
     return sorted(((k, v) for k, v in count.items() if v >= 2),
                   key=lambda kv: -kv[1])[:6]
+
+
+# 주격 조사만 본다. `_unknown_names` 의 목적격까지 받으면 `티켓을` 같은 사물이 걸린다.
+_SUBJ_PAT = re.compile(r"(?<![가-힣0-9])([가-힣]{2,4}|[0-9]{2,4})(은|는|이|가)(?![가-힣])")
+# 주격 조사가 붙지만 이름이 아닌 것 — 실측 잡음. 참고 출력이라 목록으로 누른다.
+_NOT_NAME = {"무언", "슬픔", "구미", "한계", "하나", "깨달", "멘탈", "참교육",
+             "강도", "일진", "일진들", "해결사", "경찰", "사장", "주인공"}
+
+
+def _late_names(doc):
+    """나레이션에서 **처음** 등장하는 이름이 대본 마지막 25% 에서만 나오는 것.
+
+    심사평이 반복해서 때린 자리다 — 「대본 전체에 한 번도 나온 적 없는 로이스가
+    결말에서 소개 없이 계약을 막는다」. 실측으로 father 3판의 로이스 · robber 의
+    테런스 · gentleman 의 코치가 잡힌다. `_unknown_names` 처럼 자막에 있는 어간만
+    남기면 안 된다 — 번역 대본은 자막이 영어라 이름이 한글로 안 나온다.
+    대사에서 먼저 불린 이름은 뺀다(그건 대사가 소개한 것이다). **참고**다 — 오탐
+    표본이 없어 게이트로 안 올린다.
+    """
+    import script_io
+    items = [it for _, it in script_io.items(doc)]
+    n = len(items)
+    if n < 4:
+        return []
+    first, dlg = {}, {}
+    for i, it in enumerate(items):
+        for stem, _ in _SUBJ_PAT.findall(it["text"]):
+            if stem.endswith(_VERBISH) or stem in _NOT_NAME:
+                continue
+            (dlg if it["kind"] == "dialogue" else first).setdefault(stem, i)
+    return [s for s, i in first.items()
+            if i >= n * 0.75 and dlg.get(s, n) >= i]
+
+
+def _requoted(doc):
+    """같은 큐(또는 같은 `@시각` 구간)를 인용한 대사 문단이 둘 이상인 것. → 대사 앞부분 목록."""
+    import script_io
+    seen, out = {}, []
+    for _, it in script_io.items(doc):
+        if it["kind"] != "dialogue":
+            continue
+        if it.get("cues"):
+            key = tuple(c["src_no"] for c in it["cues"])
+        elif it.get("span"):
+            key = ("@", round(it["span"][0], 1))
+        else:
+            continue
+        if key in seen:
+            out.append(it["text"][:14])
+        seen[key] = True
+    return out
 
 
 def _hms(sec):

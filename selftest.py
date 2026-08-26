@@ -426,6 +426,7 @@ def dialogue_tests():
     launcher_tests()
     width_error_tests()
     buildpath_tests()
+    requote_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -520,7 +521,8 @@ def variant_tests():
     # 생성 편차가 커서 조건당 한 판으로는 못 가른다 — script_gen 의 기록 참조.
     # 해시는 **경로를 지우고** 잰다 — 안 그러면 새로 클론한 사람 PC 에서
     # 무조건 실패한다(프롬프트에 절대경로가 박힌다).
-    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "71eab3d01d87d40b")
+    # 8/26 훅·이름 문구를 고쳤다(훅 대사 재인용 금지 · 통용 이름 허용 · 첫 발화 전 소개).
+    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "ce797c9772a0afc5")
     eq("기본에 들어간 변형이 없다", sg._SHIPPED, ())
     for _k in ("누가 말하는지 알게 해라", "대사를 잘게 끊어라"):
         check("실험 조항이 기본에 안 섞였다: %s" % _k, _k not in base)
@@ -928,6 +930,57 @@ def width_error_tests():
           'st.get("too_wide")' not in inspect.getsource(cli.cmd_check))
     check("pipeline 에도 없다 (파서 하나가 정본)",
           "too_wide" not in inspect.getsource(pipeline))
+
+
+def requote_tests():
+    """훅 재인용 ✘ · 늦은 이름 참고. 자산 없이 돈다.
+
+    22개 벤치 대본을 다시 재니 **진 판이 전부 같은 큐를 두 번 인용**했다(shipped
+    gentleman 2 · base2 gentleman 4 · v1 father 2), 유저 레퍼런스는 0. 심사평도
+    「2~3줄이 36~37줄에서 그대로 반복」. 늦은 이름은 「로이스가 결말에서 소개 없이」
+    — 실측으로 로이스·테런스·코치가 잡히고 레퍼런스는 0.
+    """
+    import cli
+    import script_io as sio
+    print()
+    print("[32] 훅 재인용 · 늦은 이름")
+    NL = chr(10)
+    cues = [{"idx": i, "src_no": i, "start_s": i * 3.0, "end_s": i * 3.0 + 2.0,
+             "text": "대사 %d 줄이야" % i, "lines": ["대사 %d 줄이야" % i]}
+            for i in range(1, 9)]
+    H1, H2 = "[00:00:00 ~ 00:00:30]", "[00:00:00 ~ 00:00:30]"
+    def doc(*paras):
+        return sio.read("제목" + NL * 2 + H1 + NL * 2 + (NL * 2).join(paras) + NL,
+                        cues, log=lambda *_: None)
+    # 한 블록 안의 중복은 `script_io._mark_used` 가 이미 ScriptError 로 막는다.
+    # 실제 재인용은 **훅 블록 ↔ 시간순 블록**, 블록을 가로질러 생긴다 — 그걸 잰다.
+    two = sio.read("제목" + NL * 2 + H1 + NL * 2 + "대사 1 줄이야" + NL * 2
+                   + H2 + NL * 2 + "(멘탈이 나갔고)" + NL * 2 + "대사 2 줄이야" + NL * 2
+                   + "대사 1 줄이야" + NL, cues, log=lambda *_: None)
+    eq("블록을 가로질러 같은 큐 두 번이면 1쌍", len(cli._requoted(two)), 1)
+    eq("다른 큐면 0", len(cli._requoted(doc("대사 1 줄이야", "대사 2 줄이야"))), 0)
+    span = sio.fmt_span(3.0, 5.0) + " 대사 1 줄이야"
+    two_span = sio.read("제목" + NL * 2 + H1 + NL * 2 + span + NL * 2 + H2 + NL * 2
+                        + "대사 2 줄이야" + NL * 2 + span + NL, cues, log=lambda *_: None)
+    eq("@시각 같은 구간도 잡는다", len(cli._requoted(two_span)), 1)
+    # 늦은 이름 — 문단 8개 중 마지막 2개(75%~)에 처음 나오는 주어
+    late = doc("대사 1 줄이야", "대사 2 줄이야", "대사 3 줄이야", "대사 4 줄이야",
+               "대사 5 줄이야", "대사 6 줄이야", "(그때 로이스가 나타났고)", "대사 7 줄이야")
+    eq("결말에서 처음 나오는 이름을 잡는다", cli._late_names(late), ["로이스"])
+    early = doc("(로이스가 화가 났는데)", "대사 1 줄이야", "대사 2 줄이야", "대사 3 줄이야",
+                "대사 4 줄이야", "대사 5 줄이야", "(그때 로이스가 나타났고)", "대사 6 줄이야")
+    eq("앞에서 소개된 이름은 안 잡는다", cli._late_names(early), [])
+    noise = doc("대사 1 줄이야", "대사 2 줄이야", "대사 3 줄이야", "대사 4 줄이야",
+                "대사 5 줄이야", "대사 6 줄이야", "(그때 멘탈이 나갔고 무언가 떠올랐는데)", "대사 7 줄이야")
+    eq("멘탈·무언가 같은 잡음은 안 잡는다", cli._late_names(noise), [])
+    check("문단이 4개 미만이면 안 잰다",
+          cli._late_names(doc("(로이스가 왔고)", "대사 1 줄이야")) == [])
+    # 프롬프트 문구 — 규칙과 검사가 같은 말을 해야 한다
+    import script_gen as sg
+    pr = sg.build_prompt("x.srt", "o.txt", 180)
+    check("프롬프트가 훅 대사 재인용을 금지한다", "훅에 쓴 대사는 뒤에서" in pr)
+    check("프롬프트가 첫 발화 전 소개를 시킨다", "처음 말하기 전에" in pr)
+    check("통용 이름을 허용한다(규칙 8)", "널리 통용되는" in pr)
 
 
 def buildpath_tests():
@@ -1714,7 +1767,7 @@ def main():
     for _k in ("숫자를 맞추려 하지 마라", "`그`·`그녀`로 부르지 마라",
                "설명하지 말고 반응을 적어라", "은어와 과장을 쓴다",
                "나레이션을 아껴라", "많이 쓰라고 한 게 아니다",
-               "아끼는 건 개수지 표현이 아니다", "이름은 자막에 나온 것만 쓴다",
+               "아끼는 건 개수지 표현이 아니다", "이름은 자막에 나온 것을 우선한다",
                "이건 결과지 목표가 아니다"):
         check("프롬프트에 '%s'" % _k, _k in _pp)
     check("목소리가 숫자보다 앞에 온다",
