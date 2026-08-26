@@ -102,10 +102,23 @@ def cmd_gen(a):
         if f not in FILMS:
             sys.exit("모르는 영화: %s (%s)" % (f, ", ".join(FILMS)))
     jobs = [(f, i) for f in films for i in range(1, a.runs + 1)]
+    # 이어서 하기 — 성공한 판은 다시 안 뽑는다. 실측(8/26): Codex 사용량 한도로
+    # 9판 중 6판이 죽었는데, 그대로 다시 돌리면 살아 있는 3판까지 새로 뽑느라
+    # 한도를 또 태우고, 결과 JSON 을 통째로 덮어써 **성공한 판을 잃는다.**
+    keep = []
+    if a.resume:
+        pth = BENCH / ("%s.json" % a.tag)
+        if pth.exists():
+            for r in json.loads(pth.read_text(encoding="utf-8")):
+                if r.get("ok") and Path(r["script"]).exists():
+                    keep.append(r)
+            done = {(r["film"], r["run"]) for r in keep}
+            jobs = [j for j in jobs if j not in done]
+            print("이어서 — 이미 된 %d판은 건너뜁니다" % len(keep))
     print("배치 %s — %d회 (영화 %d × %d회), 동시 %d개, 변형 %s"
           % (a.tag, len(jobs), len(films), a.runs, a.jobs,
              a.variant or "없음(기본)"))
-    out, sem, lock = [], threading.Semaphore(a.jobs), threading.Lock()
+    out, sem, lock = list(keep), threading.Semaphore(a.jobs), threading.Lock()
 
     def worker(film, i):
         with sem:
@@ -121,6 +134,7 @@ def cmd_gen(a):
         t.join()
     BENCH.mkdir(parents=True, exist_ok=True)
     p = BENCH / ("%s.json" % a.tag)
+    out.sort(key=lambda r: (r["film"], r["run"]))
     p.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     ok = sum(1 for r in out if r["ok"])
     print("%d/%d 성공 · %s" % (ok, len(out), p))
@@ -369,6 +383,8 @@ def main(argv=None):
     p.add_argument("--films", default="father,robber,gentleman")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--extra", default="")
+    p.add_argument("--resume", action="store_true",
+                   help="이미 성공한 판은 건너뛰고 실패·안 한 판만 채운다")
     p.add_argument("--keep-log", dest="keep_log", action="store_true",
                    help="성공해도 에이전트 로그를 남긴다 (자기 점검 수행 여부 확인용)")
     p.add_argument("--variant", default=None,
