@@ -909,3 +909,152 @@ def generate(srt_path, out_path, target_s=180, extra="", movie_title="",
         "  쓰라고 준 경로: %s\n"
         "  에이전트 출력(끝부분):\n%s"
         % (staged, "\n".join(("    " + l) for l in last.splitlines()[-12:])))
+
+
+# ── 후보 순위 판정 ───────────────────────────────────────────────────────────
+# 같은 프롬프트로도 판마다 갈리는 영화가 있다(gentleman: 7판 중 5판이 다른 줄기).
+# 후보를 여럿 뽑아 **에이전트에게 순위를 매기게** 하면 그 편차가 이득이 된다 —
+# 어떤 대본이 좋은지 우리가 몰라도 된다. 순위는 순환 3순서로 세 번 받는다:
+# 심사자는 우열을 못 가르면 전원 1번을 찍으므로(자기 검사 9표 전원) 각 후보가
+# 1번 자리에 정확히 한 번씩 서야 그 편향이 상쇄된다.
+#
+# Codex 는 `--output-schema` + `-o` 로 답을 JSON 파일로 받고 `-s read-only` 로
+# 아무것도 못 쓰게 한다. 그 인자가 없는 러너(claude)는 지시서에 「결과 파일을
+# 써라」로 대신한다. 어느 쪽이든 파일이 없거나 순위가 순열이 아니면 그 표는 버린다.
+
+RANK_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["ranking", "why"],
+    "properties": {
+        "ranking": {"type": "array", "items": {"type": "integer"},
+                    "description": "1위부터. 대본 번호."},
+        "why": {"type": "string", "description": "1위를 고른 이유 두 문장 이내"},
+    },
+}
+
+RANK_RUBRIC = (
+    "**종합 관점** — 다섯 가지를 함께 본다:",
+    "- 훅: 첫 3줄이 계속 보게 만드는가 (설명부터 시작하면 감점)",
+    "- 셋업: 웃기거나 중요한 대사 앞에 깔아 주는 줄이 있는가 (맥락 없이 튀어나오면 감점)",
+    "- 결말: 끝이 여운을 남기는가, 뚝 끊기는가",
+    "- 줄기: 한 이야기를 끝까지 따라가는가, 여러 갈래를 욱여넣었는가",
+    "- 소개: 처음 나오는 인물이 이름·역할로 소개되는가",
+)
+
+
+def neutral_text(doc):
+    """대본 → 심사용 중립 형식. `대사`/`나레` + 한 줄. 시각·번호·헤더는 뺀다 —
+    형식이 남으면 심사자가 대본이 아니라 형식을 본다."""
+    out = []
+    for blk in doc["blocks"]:
+        for it in blk["items"]:
+            tag = "나레" if it["kind"] == "narration" else "대사"
+            out.append("%s  %s" % (tag, it["text"].replace(chr(10), " ").strip()))
+    return chr(10).join(out)
+
+
+def _rank_prompt(texts, result_path, can_write):
+    n = len(texts)
+    lines = [
+        "아래는 **같은 영화**로 만든 유튜브 숏츠 영화 리뷰 대본 %d개다." % n,
+        "각 줄은 화면에 뜨는 자막 한 장이고, `대사` 는 영화 대사, `나레` 는 내레이션이다.",
+        "",
+        "**어느 숏츠를 가장 보고 싶은가?** 1위부터 %d위까지 순위를 매겨라." % n,
+        "",
+        "- 같은 영화라 줄거리가 겹치는 건 당연하다. **어느 쪽이 더 잘 만들었는지**만 봐라.",
+        "- 누가 썼는지 추측하지 마라. 오타·띄어쓰기·줄 수로 판단하지 마라.",
+        "- 동률은 없다. 반드시 %d개를 다 다른 순위에 놓아라." % n,
+        "- 파일을 읽거나 만들거나 고치지 마라. 아래 본문만 보고 답해라.",
+        "",
+    ]
+    lines += list(RANK_RUBRIC)
+    lines += ["", "답은 JSON 하나로만 한다 — 다른 말을 붙이지 마라:",
+              '  {"ranking": [1위 번호, 2위 번호, ...], "why": "1위를 고른 이유 두 문장 이내"}']
+    if can_write:
+        lines += ["그 JSON 을 이 파일에 써라: %s" % result_path]
+    for i, t in enumerate(texts, 1):
+        lines += ["", "=" * 28 + " %d번 " % i + "=" * 28, t]
+    return chr(10).join(lines) + chr(10)
+
+
+def _parse_ranking(path, n):
+    """결과 파일 → 자리 번호 순위. 순열이 아니면 None (그 표는 버린다)."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8-sig").strip()
+        i, j = raw.find("{"), raw.rfind("}")
+        d = json.loads(raw[i:j + 1])
+        r = [int(x) for x in d["ranking"]]
+        if sorted(r) != list(range(1, n + 1)):
+            return None, ""
+        return r, str(d.get("why", ""))[:200]
+    except Exception:                                       # noqa: BLE001
+        return None, ""
+
+
+def rank_candidates(paths, cues, work, *, prefer=None, log=print, stop=None,
+                    timeout=300):
+    """후보 대본들의 순위. → (이긴 후보 인덱스(0부터), 평균 순위 목록, 이유) 또는 None.
+
+    순환 3순서 (1,2,3)(2,3,1)(3,1,2) — 각 후보가 1번 자리에 한 번씩. 표마다 별개
+    폴더(`work/심사k/`), 타임아웃 300초, **timing 기록 안 함**(대본 예상을 오염시킨다).
+    한 표도 못 받으면 None — 호출자가 후보 1을 쓴다. 심사 실패는 오류가 아니다.
+    """
+    import script_io
+    n = len(paths)
+    if n < 2:
+        return None
+    key, exe, spec = _resolve_runner(prefer)
+    texts = []
+    for pth in paths:
+        doc = script_io.read(Path(pth).read_bytes().decode("utf-8-sig"), cues,
+                             log=lambda *_: None)
+        texts.append(neutral_text(doc))
+    work = Path(work)
+    schema = work / "심사스키마.json"
+    work.mkdir(parents=True, exist_ok=True)
+    schema.write_text(json.dumps(RANK_SCHEMA, ensure_ascii=False), encoding="utf-8")
+    orders = [[(s + i) % n for i in range(n)] for s in range(n)]
+    sums = [0.0] * n
+    firsts = [0] * n
+    votes = 0
+    why = ""
+    for k, order in enumerate(orders, 1):
+        if stop is not None and stop.is_set():
+            break
+        wd = work / ("심사%d" % k)
+        wd.mkdir(parents=True, exist_ok=True)
+        result = wd / "심사결과.json"
+        result.unlink(missing_ok=True)
+        ptxt = wd / "생성중_지시서.txt"
+        can_write = key != "codex"
+        ptxt.write_text(_rank_prompt([texts[i] for i in order], result, can_write),
+                        encoding="utf-8")
+        extra = {"codex": ["--output-schema", str(schema), "-o", str(result),
+                           "-s", "read-only"]}
+        try:
+            ok, out, _ = run_prompt_file(
+                ptxt, wd, done=lambda: result.exists() and result.stat().st_size > 0,
+                key=key, exe=exe, spec=spec, timeout=timeout, timing_key=None,
+                extra_argv=extra, log=lambda *_: None, stop=stop)
+        except GenError as e:
+            log("  (심사 %d회 실패 — %s)" % (k, str(e).splitlines()[0][:60]))
+            continue
+        rank, reason = _parse_ranking(result, n) if ok else (None, "")
+        if rank is None:
+            log("  (심사 %d회 — 답을 읽지 못해 버립니다)" % k)
+            continue
+        votes += 1
+        for place, slot in enumerate(rank, 1):
+            cand = order[slot - 1]
+            sums[cand] += place
+            if place == 1:
+                firsts[cand] += 1
+        if not why and reason:
+            why = reason
+        log("  심사 %d회: %s" % (k, " > ".join("후보%d" % (order[s - 1] + 1) for s in rank)))
+    if votes == 0:
+        return None
+    avg = [x / votes for x in sums]
+    # 평균 순위 → 1위 횟수 → 앞 후보 순으로 동률을 푼다
+    best = min(range(n), key=lambda i: (avg[i], -firsts[i], i))
+    return best, avg, why

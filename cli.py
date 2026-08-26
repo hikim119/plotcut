@@ -118,6 +118,8 @@ def main(argv=None):
                    help="영화 제목. 알면 적어라 — 에이전트가 줄거리·결말을 참고한다")
     p.add_argument("--agent", default=None, choices=["codex", "claude"],
                    help="대본 생성기. 생략하면 로그인된 것을 자동으로 고른다")
+    p.add_argument("--candidates", type=int, default=1,
+                   help="후보를 N개 뽑아 에이전트가 고른다 (약 4배 느림). 기본 1")
 
     p = sub.add_parser("build", help="CapCut 프로젝트 만들기 (매번 새로 만든다)")
     p.add_argument("script", nargs="?", default=None,
@@ -169,7 +171,7 @@ def _run(a):
         import pipeline
         r = pipeline.run_script(a.srt, a.out, project_name=a.name,
                                 target_s=a.seconds, extra=a.extra,
-                                movie_title=a.title,
+                                movie_title=a.title, candidates=a.candidates,
                                 prefer=a.agent, log=print)
         print("\n대본: %s" % r["script_path"])
         return 0

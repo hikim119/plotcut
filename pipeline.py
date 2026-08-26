@@ -286,6 +286,79 @@ def _cuts_of(pl):
             for i, s in enumerate(pl["segments"])]
 
 
+def _fingerprint(script_path, cues):
+    """후보가 서로 같은지 보는 지문 — 인용한 큐 번호 집합 + 첫 블록 헤더."""
+    try:
+        d = script_io.read(Path(script_path).read_bytes().decode("utf-8-sig"), cues,
+                           log=lambda *_: None)
+    except Exception:                                       # noqa: BLE001
+        return None
+    quoted = sorted(c["src_no"] for _, it in script_io.items(d)
+                    if it["kind"] == "dialogue" for c in (it.get("cues") or []))
+    first = d["blocks"][0]["header"] if d["blocks"] else ""
+    return (tuple(quoted), first)
+
+
+def _pick_candidate(srt_path, rdir, out, n, gen, prefer, offset_s, fps_scale,
+                    prefer_class, log, progress, stop):
+    """후보 n개를 **순차로** 뽑아 에이전트에게 순위를 매기게 하고 이긴 것을 고른다.
+
+    · 후보 폴더는 **생성 직전에** 만든다 — 먼저 만들면 GenError 빈 폴더 청소가 안 돈다.
+    · 후보 1이 끝난 뒤 중단이면 Stopped 가 아니라 **후보 1을 결과로** 돌려준다.
+    · 후보가 서로 같으면(같은 큐·같은 훅) 심사를 건너뛴다 — father 같은 영화는 7판이
+      다 같아서, 3배 시간을 쓰고 동일 후보를 심사하는 건 정직하지 않다.
+    · 심사 실패는 오류가 아니다 — 후보 1을 쓰고 계속 간다. 후보는 전부 남는다.
+    """
+    import script_gen
+    done = []
+    gen_share = 0.85
+    for k in range(1, n + 1):
+        _check(stop)
+        cdir = Path(rdir) / ("후보%d" % k)
+        cdir.mkdir(parents=True, exist_ok=True)
+        log("  ── 후보 %d/%d ──" % (k, n))
+        lo = gen_share * (k - 1) / n
+        span = gen_share / n
+        try:
+            done.append(gen(cdir / out.name, cdir, lambda f, lo=lo, span=span: progress(lo + span * f)))
+        except script_gen.GenStopped:
+            if done:
+                log("  중단 — 이미 나온 후보 %d개 중 1번을 씁니다" % len(done))
+                break
+            raise
+    if len(done) == 1:
+        winner, why = 0, ""
+    else:
+        cues, _ = subtitle.parse_file(srt_path, prefer_class, offset_s, fps_scale)
+        fps = [_fingerprint(pth, cues) for pth in done]
+        if all(fp == fps[0] for fp in fps):
+            log("  후보가 서로 같아(같은 큐·같은 훅) 심사 없이 1번을 씁니다")
+            winner, why = 0, ""
+        else:
+            progress(gen_share)
+            log("  후보 %d개 심사 — 에이전트가 순위를 매깁니다" % len(done))
+            _check(stop)
+            res = script_gen.rank_candidates(done, cues, Path(rdir) / "심사",
+                                             prefer=prefer, log=log, stop=stop)
+            if res is None:
+                log("  심사 실패 — 후보 1을 씁니다")
+                winner, why = 0, ""
+            else:
+                winner, avg, why = res
+                log("  평균 순위: %s" % " · ".join("후보%d %.1f" % (i + 1, a)
+                                                  for i, a in enumerate(avg)))
+    progress(0.93)
+    src = done[winner]
+    for extra_name in (script_gen.PLOT_NAME, "에이전트로그.txt"):
+        fp = src.parent / extra_name
+        if fp.exists():
+            shutil.copy(str(fp), str(Path(rdir) / extra_name))
+    shutil.copy(str(src), str(out))
+    log("  후보 %d개 중 **%d번**을 골랐습니다%s" % (len(done), winner + 1,
+                                              (" — " + why) if why else ""))
+    return Path(out)
+
+
 # ── 대본만 만들기 ───────────────────────────────────────────────────────────
 
 # 대본만 만들기 결과도 results/ 안에 자기 폴더를 갖는다.
@@ -293,7 +366,7 @@ def _cuts_of(pl):
 SCRIPT_DIR_SUFFIX = "_대본만만들기"
 
 def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
-               movie_title="", variant=None, keep_log=False,
+               movie_title="", variant=None, keep_log=False, candidates=1,
                prefer=None, offset_s=0.0, fps_scale=1.0, prefer_class=None,
                log=print, progress=_noop, stop=None):
     """자막 → 대본 txt 까지만. CapCut은 만들지 않는다."""
@@ -312,13 +385,20 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
     # 중간 파일(지시서·초안·에이전트 로그)도 이 폴더에 둔다 — 한 실행이
     # 한 폴더로 끝나고, 성공하면 대본만 남는다.
     # 에이전트가 도는 동안 경과/예상으로 실제로 차오른다 (0 → 90%)
-    try:
-        path = script_gen.generate(srt_path, out, target_s=target_s, extra=extra,
+    def _gen(out_file, work, frac):
+        return script_gen.generate(srt_path, out_file, target_s=target_s, extra=extra,
                                    movie_title=movie_title, variant=variant,
                                    keep_log=keep_log,
-                                   prefer=prefer, work_dir=rdir,
-                                   log=log, stop=stop,
-                                   progress=lambda f: progress(0.90 * f))
+                                   prefer=prefer, work_dir=work,
+                                   log=log, stop=stop, progress=frac)
+
+    n_cand = max(1, int(candidates or 1)) if rdir is not None else 1
+    try:
+        if n_cand == 1:
+            path = _gen(out, rdir, lambda f: progress(0.90 * f))
+        else:
+            path = _pick_candidate(srt_path, rdir, out, n_cand, _gen, prefer,
+                                   offset_s, fps_scale, prefer_class, log, progress, stop)
     except script_gen.GenStopped:
         # 중단은 실패가 아니라 취소다 — 진단할 게 없으니 만든 폴더째 치운다.
         _discard_dir(rdir)

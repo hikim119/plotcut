@@ -124,6 +124,7 @@ class App:
         self.secs_var = tk.StringVar(value="180")
         # 기본은 **끔** — 영화 소리를 100% 그대로 둔다.
         self.mute_var = tk.BooleanVar(value=False)
+        self.cand_var = tk.BooleanVar(value=False)   # 후보 3개 중 고르기
         self.agent_ko = tk.StringVar()
         self.auth_lbl = None
         self._frac = 0.0
@@ -289,6 +290,10 @@ class App:
         title(r, "옵션")
         chk(r, self.mute_var, "나레이션 구간 음소거",
             "나레이션 밑에서 원본 대사가 새는 구간을 지웁니다")
+        r = row()
+        title(r, "")
+        chk(r, self.cand_var, "후보 3개 중 고르기",
+            "약 4배 느립니다 — 대본을 3개 뽑아 에이전트가 이긴 것을 고릅니다. 후보는 전부 남습니다")
         r = row()
         title(r, "대본 길이")
         tk.Entry(r, textvariable=self.secs_var, bg=BG3, fg=TEXT, width=5,
@@ -586,6 +591,7 @@ class App:
             self.paths["srt"], project_name=self.name_var.get().strip() or None,
             target_s=secs, extra=self._extra(),
             movie_title=self._title(),
+            candidates=3 if self.cand_var.get() else 1,
             prefer=self._agent(), offset_s=float(self.offset_var.get()),
             log=self._log, progress=self._progress, stop=self._stop))
 

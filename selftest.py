@@ -428,6 +428,7 @@ def dialogue_tests():
     buildpath_tests()
     requote_tests()
     runner_core_tests()
+    candidates_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -931,6 +932,112 @@ def width_error_tests():
           'st.get("too_wide")' not in inspect.getsource(cli.cmd_check))
     check("pipeline 에도 없다 (파서 하나가 정본)",
           "too_wide" not in inspect.getsource(pipeline))
+
+
+def candidates_tests():
+    """후보 N개 중 고르기 — 가짜 Popen 으로 끝까지. 자산 없이 돈다.
+
+    세 갈래: ① 심사가 후보2를 세 순서 모두 1위로 → 후보2가 최상위로 복사
+    ② 후보가 서로 같으면 심사 생략 ③ 심사가 답을 못 내면 후보 1.
+    순환 3순서는 후보2가 1·2·3번 자리에 **한 번씩** 서야 한다 — 심사자는 못 가르면
+    전원 1번을 찍으므로 그 편향이 상쇄되는 조건이다.
+    """
+    import json
+    import re
+    import script_gen as sg
+    import pipeline
+    print()
+    print("[34] 후보 N개 중 고르기")
+    NL = chr(10)
+    td = pathlib.Path(tempfile.mkdtemp())
+    srt = td / "가짜영화_자막.srt"
+    srt.write_text(NL.join("%d%s00:00:%02d,000 --> 00:00:%02d,000%s대사 %d 줄이야%s"
+                           % (i, NL, i * 3, i * 3 + 2, NL, i, NL) for i in range(1, 7)),
+                   encoding="utf-8")
+    st = {"gen": 0, "judge": 0, "mode": "ok", "slots": []}
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            m = re.search(r'"([^"]+생성중_지시서' + chr(92) + '.txt)"', " ".join(argv))
+            work = pathlib.Path(m.group(1)).parent
+            if "--output-schema" in argv:
+                st["judge"] += 1
+                res = pathlib.Path(argv[argv.index("-o") + 1])
+                if st["mode"] == "ok":
+                    txt = (work / "생성중_지시서.txt").read_text(encoding="utf-8")
+                    bodies = txt.split("=" * 28)[2::2]
+                    slot = next(i + 1 for i, b in enumerate(bodies) if "대사 2 줄이야" in b)
+                    st["slots"].append(slot)
+                    rest = [x for x in (1, 2, 3) if x != slot]
+                    res.write_text(json.dumps({"ranking": [slot] + rest, "why": "후보2"}),
+                                   encoding="utf-8")
+                kw["stdout"].write(b"judge")
+            else:
+                st["gen"] += 1
+                k = 1 if st["mode"] == "same" else st["gen"]
+                (work / "생성중_초안.txt").write_text(
+                    "제목" + NL * 2 + "[00:00:01 ~ 00:00:20]" + NL * 2
+                    + "대사 %d 줄이야" % k + NL * 2 + "대사 %d 줄이야" % (k + 3) + NL,
+                    encoding="utf-8")
+                (work / "생성중_줄거리.txt").write_text("[줄거리]" + NL + "후보 %d" % k + NL,
+                                                     encoding="utf-8")
+                kw["stdout"].write(b"gen")
+        def poll(self):
+            return 0
+
+    real = sg.subprocess.Popen
+    made = []
+    # 가짜 러너는 0초에 끝난다 — 그대로 두면 **진짜 진행률 추정**(최근 5회 중앙값)을
+    # 0초로 오염시킨다. 프로브 때 실제로 그랬고 [33] 이 그걸 잡았다. 저장·복원.
+    timing = sg.TIMING
+    before = timing.read_text(encoding="utf-8") if timing.exists() else None
+    try:
+        sg.subprocess.Popen = FakePopen
+        logs = []
+        r = pipeline.run_script(str(srt), project_name="selftest_후보", candidates=3,
+                                log=logs.append)
+        made.append(r["results_dir"])
+        rd = pathlib.Path(r["results_dir"])
+        eq("후보 3개를 뽑고 3번 심사한다", (st["gen"], st["judge"]), (3, 3))
+        eq("순환 3순서 — 후보2가 세 자리에 한 번씩", sorted(st["slots"]), [1, 2, 3])
+        check("후보 폴더가 전부 남는다", all((rd / ("후보%d" % k)).is_dir() for k in (1, 2, 3)))
+        check("이긴 후보2가 최상위에 복사된다",
+              "대사 2 줄이야" in pathlib.Path(r["script_path"]).read_text(encoding="utf-8"))
+        check("줄거리도 같이 온다", "후보 2" in (rd / "줄거리.txt").read_text(encoding="utf-8"))
+        check("무엇을 왜 골랐는지 로그에 있다",
+              any("2번**을 골랐습니다 — 후보2" in l for l in logs))
+
+        st.update(gen=0, judge=0, mode="same"); logs.clear()
+        r = pipeline.run_script(str(srt), project_name="selftest_후보동일", candidates=3,
+                                log=logs.append)
+        made.append(r["results_dir"])
+        eq("후보가 같으면 심사를 안 한다", st["judge"], 0)
+        check("그 사실을 말한다", any("심사 없이" in l for l in logs))
+
+        st.update(gen=0, judge=0, mode="fail"); logs.clear()
+        r = pipeline.run_script(str(srt), project_name="selftest_후보실패", candidates=3,
+                                log=logs.append)
+        made.append(r["results_dir"])
+        check("심사 실패면 후보 1 + 계속 진행", any("심사 실패" in l for l in logs)
+              and "대사 1 줄이야" in pathlib.Path(r["script_path"]).read_text(encoding="utf-8"))
+
+        # 순위 파싱 — 순열이 아니면 버린다, JSON 주변 잡글은 허용
+        f = td / "r.json"
+        f.write_text('답: {"ranking": [2, 1, 3], "why": "x"} 끝', encoding="utf-8")
+        eq("JSON 주변 글은 걷어낸다", sg._parse_ranking(f, 3)[0], [2, 1, 3])
+        f.write_text('{"ranking": [1, 1, 2], "why": "x"}', encoding="utf-8")
+        check("순열이 아니면 버린다", sg._parse_ranking(f, 3)[0] is None)
+        f.write_text("이건 JSON 이 아니다", encoding="utf-8")
+        check("깨진 답도 버린다", sg._parse_ranking(f, 3)[0] is None)
+    finally:
+        sg.subprocess.Popen = real
+        if before is None:
+            timing.unlink(missing_ok=True)
+        else:
+            timing.write_text(before, encoding="utf-8")
+        for d in made:
+            shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def runner_core_tests():
