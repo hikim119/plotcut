@@ -317,6 +317,50 @@ def tally(votes):
             "rate": {k: round(win.get(k, 0) / v, 3) for k, v in tot.items()}}
 
 
+# ── Codex 관문 — 제품 심사자가 독립 심사자와 맞는가 ──────────────────────────
+# 실험 심사는 sonnet(Workflow)이고 제품 심사는 Codex(`script_gen.rank_candidates`)다.
+# 실험이 순위 심사를 검증해도 그건 sonnet 의 순위다. 후보 기능의 가치는 「Codex 가
+# 고른 후보가 독립 심사자가 고른 후보와 얼마나 일치하는가」인데, 그걸 여기서 잰다.
+# 판 k 로 묶어 {tag1_k, tag2_k, tag3_k} 를 한 블록으로 순위 매긴다 — 제품과 같은
+# 함수, 같은 순환 3순서.
+
+def cmd_rank(a):
+    import script_gen
+    import subtitle
+    tags = [t.strip() for t in a.tags.split(",") if t.strip()]
+    films = [f.strip() for f in a.films.split(",") if f.strip()]
+    recs = {}
+    for t in tags:
+        for r in json.loads((BENCH / ("%s.json" % t)).read_text(encoding="utf-8")):
+            if r.get("ok"):
+                recs[(t, r["film"], r["run"])] = r["script"]
+    out = []
+    for film in films:
+        cues = subtitle.parse_file(FILMS[film]["srt"])[0]
+        for k in range(1, a.runs + 1):
+            paths = [recs.get((t, film, k)) for t in tags]
+            if any(p is None for p in paths):
+                print("  %s 판%d — 빠진 조건이 있어 건너뜀" % (film, k))
+                continue
+            work = BENCH / "rank" / ("%s_%d" % (film, k))
+            res = script_gen.rank_candidates(paths, cues, work, prefer=a.agent,
+                                             log=lambda m: print("   " + m.strip()))
+            if res is None:
+                print("  %s 판%d — 심사 실패" % (film, k))
+                out.append({"film": film, "run": k, "tags": tags, "ok": False})
+                continue
+            best, avg, why = res
+            print("  %s 판%d → 1위 %s · 평균 %s" % (film, k, tags[best],
+                  " ".join("%s=%.1f" % (t, v) for t, v in zip(tags, avg))))
+            out.append({"film": film, "run": k, "tags": tags, "ok": True,
+                        "best": tags[best], "avg": avg, "why": why})
+    BENCH.mkdir(parents=True, exist_ok=True)
+    pth = BENCH / ("rank_%s.json" % "_".join(tags))
+    pth.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("저장:", pth)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="bench")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -332,11 +376,18 @@ def main(argv=None):
     p.add_argument("--jobs", type=int, default=JOBS)
     p = sub.add_parser("pack", help="대결용 중립 형식으로 굽는다")
     p.add_argument("--tag", required=True)
+    p = sub.add_parser("rank", help="Codex 로 조건별 판 묶음의 순위를 매긴다 (관문)")
+    p.add_argument("--tags", required=True, help="예: base3,nameN,selfS")
+    p.add_argument("--films", default="gentleman")
+    p.add_argument("--runs", type=int, default=3)
+    p.add_argument("--agent", default=None, choices=["codex", "claude"])
     a = ap.parse_args(argv)
     if a.cmd == "gen":
         return cmd_gen(a)
     if a.cmd == "pack":
         return cmd_pack(a)
+    if a.cmd == "rank":
+        return cmd_rank(a)
     return 1
 
 
