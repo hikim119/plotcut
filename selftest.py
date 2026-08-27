@@ -572,6 +572,19 @@ def variant_tests():
     for _k in ("한 이름으로만", "지식을 이름에", "처음 말하기 전에"):
         check("이름 규칙이 살아 있다: %s" % _k, _k in base)
 
+    # **완성본 안내가 프롬프트에 있어야 한다.** 8/27 에 유저분이 `대본예시/*.srt` 를
+    # 하위 폴더로 옮기자 이 줄이 통째로 사라졌는데 아무도 못 알아챘다 — 대본은
+    # 계속 나오고 문체만 조용히 나빠진다. 폴더가 있는데 안내가 없으면 실패다.
+    if (ROOT / "대본예시").is_dir():
+        _n = len([q for q in (ROOT / "대본예시").rglob("*")
+                  if q.is_file() and q.suffix.lower() in (".srt", ".txt", ".vtt")
+                  and "원본자막" not in q.parts])
+        if _n:
+            check("완성본 안내가 프롬프트에 있다 (%d개)" % _n,
+                  "완성본 %d개" % _n in base,
+                  [l for l in base.splitlines() if "완성본" in l][:1])
+            check("원본자막은 읽지 말라고 한다", "원본자막" in base and "읽지 마라" in base)
+
     # 장면 지시 — **길이와 상관없이 항상** 건다. 자르면 유저분 지시를 어긴다.
     check("짧은 영화에도 장면 지시를 건다", "한 대목만 써라" in base)
     check("결말을 버려도 된다고 말해 준다", "결말을 쓰지 마라" in base)

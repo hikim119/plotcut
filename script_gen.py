@@ -443,20 +443,29 @@ def build_prompt(srt_path, out_path, target_s=180, extra="", movie_title="",
     # 프롬프트 문장이 "안의 srt 전부"였다. 폴더를 `ls` 하면 `원본자막/` 아래
     # 271KB짜리 영어 원본 .vtt 3개가 보이는데, 그건 완성본이 아니라 **번역 전
     # 원문**이다. 읽으면 문체가 영어 대사에 오염되고 읽는 양이 5배가 된다.
-    # 완성본은 srt 로만 있는 게 아니다 — 유저분이 손으로 적어 둔 `.txt` 도 있다
-    # (8/27: `malcolm_내가적은대본.txt`). `*.srt` 만 읽히고 있어서 그건 통째로
-    # 안 보이고 있었다. 최상위의 srt·txt 를 다 읽힌다.
+    # 완성본을 어디서 찾는가 — **폴더 구조에 안 기댄다.**
+    # 8/27 에 유저분이 `대본예시/*.srt` 를 `대본예시/내가적은대본/` 으로 옮기자
+    # 이 안내가 프롬프트에서 **통째로 사라졌다.** 아무도 못 알아챈다 — 대본은
+    # 계속 나오고 문체만 조용히 나빠진다. 그래서 `원본자막` 만 빼고 훑는다.
+    # (selftest 가 「완성본 안내가 있다」를 검사한다 — 다시 사라지면 잡힌다.)
     _samples = ROOT / "대본예시"
-    _files = sorted([q for q in _samples.glob("*.srt")] +
-                    [q for q in _samples.glob("*.txt")]) if _samples.is_dir() else []
+    _files = []
+    if _samples.is_dir():
+        for q in sorted(_samples.rglob("*")):
+            if not q.is_file() or q.suffix.lower() not in (".srt", ".txt", ".vtt"):
+                continue
+            if "원본자막" in q.parts:
+                continue
+            _files.append(q)
     if _files:
+        _where = sorted({str(q.parent) for q in _files})
         lines += [
-            '· "%s" 의 **최상위 파일 %d개**(srt·txt)는 실제로 잘 나간 완성본이다. 전부 읽어라.'
-            % (_samples, len(_files)),
+            "· 아래는 실제로 잘 나간 **완성본 %d개**다. 전부 읽어라." % len(_files),
+        ] + ["   %s" % q for q in _files] + [
             "   대사와 나레이션이 어떤 리듬으로 섞이는지 여기서 배운다. 이게 최종 기준이다.",
             "   `.txt` 는 시각 없이 화면 자막만 순서대로 적은 것이다 — 괄호가 나레이션이다.",
-            "   **하위 폴더(`원본자막/`)는 읽지 마라** — 번역 전 영어 원문이라",
-            "   완성본이 아니다. 읽으면 문체가 오염된다.",
+            '   **"%s" 는 읽지 마라** — 번역 전 원문이라 완성본이 아니다.'
+            % (_samples / "원본자막"),
         ]
     if movie_title:
         # 파일 이름이 영화 제목인 경우가 오히려 드물다(`English.srt`,
