@@ -550,18 +550,21 @@ def variant_tests():
     #   실험이 이긴 판(`--extra`, 맨 끝)과 붙여 보니 **12:0 으로 전패**했다
     #   (순서를 뒤집어도 6/6 동일). 그래서 맨 끝(사용자 지시 바로 앞)에 둔다.
     #   AGENTS.md 실험 절 참조.
-    # 8/27 **장면 지시를 넣었다 — 자막 길이로 갈린다.**
-    #   긴 영화(40분+)에만 「한 대목만 써라」가 붙는다. 긴 영화 둘에서 17:7(71%)로
-    #   이겼고, 22분 시트콤에서는 **1:11 로 졌다**(구간은 같은데 블록을 줄이고
-    #   대사를 밀어 넣어 과밀). 그래서 길이로 나눈다. AGENTS.md 실험 절 참조.
-    eq("기본 프롬프트가 안 변했다 (짧은 영화·한국어)", got, "1457b83a6e53032a")
+    # 8/27 **장면 지시 — 길이와 상관없이 항상 건다** (유저분 지시).
+    #   긴 영화 실측 25:7(78%) · 홀드아웃 17:7(71%). 한때 40분으로 잘랐는데,
+    #   그때 22분 시트콤이 1:11 로 진 건 문구에 붙어 있던 예외(「짧으면 전체를
+    #   써도 된다」) 때문이었다 — 구간은 그대로인 채 대사만 빽빽해졌다.
+    #   예외를 빼면 짧은 영화도 실제로 한 대목을 잡는다. AGENTS.md 실험 절 참조.
+    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "445e327d51a0474d")
     eq("기본에 들어간 변형이 없다", sg._SHIPPED, ())
     for _k in ("누가 말하는지 알게 해라", "대사를 잘게 끊어라"):
         check("실험 조항이 기본에 안 섞였다: %s" % _k, _k not in base)
     # 이름 블록은 **맨 끝**이어야 한다 — 문체 블록 안으로 옮기면 12:0 으로 진다.
+    # 이름 블록은 문체 블록 밖, 프롬프트 뒤쪽이어야 한다 — 문체 블록 안으로
+    # 옮기면 12:0 으로 진다. 지금은 그 뒤에 장면 블록이 하나 더 붙는다.
     _lines = base.strip().splitlines()
     _n = next((k for k, ln in enumerate(_lines) if ln.startswith("**이름 —")), -1)
-    check("이름 블록이 프롬프트 맨 끝에 있다", _n >= 0 and _n >= len(_lines) - 10,
+    check("이름 블록이 프롬프트 뒤쪽에 있다", _n >= 0 and _n >= len(_lines) - 22,
           "%d / %d" % (_n, len(_lines)))
     _with = sg.build_prompt("x.srt", "o.txt", 180, extra="잭 이야기만")
     check("사용자 지시는 그보다도 뒤 — 제일 세게 걸린다",
@@ -569,32 +572,33 @@ def variant_tests():
     for _k in ("한 이름으로만", "지식을 이름에", "처음 말하기 전에"):
         check("이름 규칙이 살아 있다: %s" % _k, _k in base)
 
-    # 장면 지시 — **자막 길이로 갈린다.** 짧은 영화에 걸면 과밀해져 1:11 로 진다.
-    check("짧은 영화에는 장면 지시를 안 건다", "한 대목만 써라" not in base)
+    # 장면 지시 — **길이와 상관없이 항상** 건다. 자르면 유저분 지시를 어긴다.
+    check("짧은 영화에도 장면 지시를 건다", "한 대목만 써라" in base)
+    check("결말을 버려도 된다고 말해 준다", "결말을 쓰지 마라" in base)
+    check("짧아도 전체를 쓰지 말라고 못 박는다", "영화가 짧아도 전체를 다 쓰지는 마라" in base)
+    _ls = base.strip().splitlines()
+    _n = next((k for k, ln in enumerate(_ls) if ln.startswith("**영화 전체를 훑지")), -1)
+    check("장면 블록도 맨 끝에 있다", _n >= 0 and _n >= len(_ls) - 12,
+          "%d / %d" % (_n, len(_ls)))
+    _nm = next((k for k, ln in enumerate(_ls) if ln.startswith("**이름 —")), -1)
+    check("이름 블록 다음에 온다", 0 <= _nm < _n)
+    _wx = sg.build_prompt("x.srt", "o.txt", 180, extra="잭 이야기만")
+    check("사용자 지시는 그보다도 뒤",
+          _wx.strip().splitlines()[-1].startswith("추가 지시(최우선)"))
     _td = pathlib.Path(tempfile.mkdtemp())
     _NL = chr(10)
     try:
-        _long = _td / "long.srt"
-        _long.write_text(_NL.join(
+        _srt = _td / "m.srt"
+        _srt.write_text(_NL.join(
             "%d%s00:%02d:00,000 --> 00:%02d:02,000%s대사 %d%s"
             % (i, _NL, i, i, _NL, i, _NL) for i in range(1, 60)), encoding="utf-8")
-        _p = sg.build_prompt(str(_long), "o.txt", 180)
-        check("긴 영화에는 장면 지시를 건다", "한 대목만 써라" in _p)
-        check("결말을 버려도 된다고 말해 준다", "결말을 쓰지 마라" in _p)
-        _ls = _p.strip().splitlines()
-        _n = next((k for k, ln in enumerate(_ls) if ln.startswith("**영화 전체를 훑지")), -1)
-        check("장면 블록도 맨 끝에 있다", _n >= 0 and _n >= len(_ls) - 11,
-              "%d / %d" % (_n, len(_ls)))
-        _nm = next((k for k, ln in enumerate(_ls) if ln.startswith("**이름 —")), -1)
-        check("이름 블록 다음에 온다", 0 <= _nm < _n)
-        _wx = sg.build_prompt(str(_long), "o.txt", 180, extra="잭 이야기만")
-        check("사용자 지시는 그보다도 뒤",
-              _wx.strip().splitlines()[-1].startswith("추가 지시(최우선)"))
-        eq("경계값 — 40분 미만은 안 건다",
-           sg._srt_minutes(str(_long)) >= sg.SCENE_MIN_MINUTES, True)
+        _p = sg.build_prompt(str(_srt), "o.txt", 180)
+        check("자막 길이를 프롬프트에 알려 준다", "이 영화는 59분이다" in _p,
+              [l for l in _p.splitlines() if "이 영화는" in l][:1])
     finally:
         shutil.rmtree(_td, ignore_errors=True)
-    eq("자막을 못 읽으면 0분 — 장면 지시를 안 건다", sg._srt_minutes("없는파일.srt"), 0.0)
+    eq("자막을 못 읽으면 0분 — 길이는 안 적는다", sg._srt_minutes("없는파일.srt"), 0.0)
+    check("길이를 몰라도 지시는 걸린다", "한 대목만 써라" in base and "이 영화는" not in base)
     check("변형을 안 주면 변형 코드가 안 돈다", sg.build_prompt(
         "x.srt", "o.txt", 180, variant=None) == base)
     for v in sg.VARIANTS:
