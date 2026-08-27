@@ -55,6 +55,11 @@ FILMS = {
                   "seconds": 111.0, "title": "", "human": True},
     "robber":    {"srt": ROOT / "대본예시" / "원본자막" / "robber 원본.vtt",
                   "seconds": 150.0, "title": "", "human": True},
+    # 긴 영어 영화(136분·4669큐) — 유저분이 직접 지정한 표본이다.
+    # 「한 대목만」 조건이 제일 크게 갈리는 조건: 정답 3편 중 긴 영화 둘은
+    # 영화의 13%·21%만 썼는데, 도구는 88~90%를 훑는다.
+    "catch":     {"srt": ROOT / "대본예시" / "원본자막" / "Catch Me If You Can 2002.srt",
+                  "seconds": 180.0, "title": "캐치 미 이프 유 캔", "human": False},
     # 한국어 자막 — **다른 분기**를 탄다. 변형이 외국어 경로에만 맞춰지지
     # 않았는지 검증하는 표본이다. 유저분 완성본은 없다.
     "chungking": {"srt": ROOT / "test" / "중경삼림 리마스터링_자막.srt",

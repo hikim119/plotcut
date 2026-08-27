@@ -507,12 +507,14 @@ def _canon_prompt(text):
                  if "영화의 말투를 따라간다" in ln)
     except StopIteration:
         return "문체 블록을 못 찾았다"
-    try:
-        n = next(k for k, ln in enumerate(lines) if ln.startswith("**이름 —"))
-        name_block = lines[n:n + 9]
-    except StopIteration:
-        name_block = ["이름 블록이 없다"]
-    return chr(10).join(lines[i:j + 1] + name_block)
+    tail = []
+    for head, span in (("**이름 —", 9), ("**영화 전체를 훑지 마라", 10)):
+        try:
+            n = next(k for k, ln in enumerate(lines) if ln.startswith(head))
+            tail += lines[n:n + span]
+        except StopIteration:
+            tail += ["%s 블록이 없다" % head]
+    return chr(10).join(lines[i:j + 1] + tail)
 
 
 def variant_tests():
@@ -527,6 +529,8 @@ def variant_tests():
     import script_gen as sg
     print()
     print("[23] 프롬프트 변형")
+    # `x.srt` 는 없는 파일이라 자막 길이가 0 으로 잡힌다 → **짧은 영화 분기**다.
+    # 긴 영화는 여기에 장면 블록이 하나 더 붙는다. 둘 다 못 박는다.
     base = sg.build_prompt("x.srt", "o.txt", 180)
     got = hashlib.sha256(_canon_prompt(base).encode("utf-8")).hexdigest()[:16]
     # 변형 넷을 대결로 재 봤지만 **아무것도 기본에 안 넣었다.** 개별로 이긴
@@ -546,7 +550,11 @@ def variant_tests():
     #   실험이 이긴 판(`--extra`, 맨 끝)과 붙여 보니 **12:0 으로 전패**했다
     #   (순서를 뒤집어도 6/6 동일). 그래서 맨 끝(사용자 지시 바로 앞)에 둔다.
     #   AGENTS.md 실험 절 참조.
-    eq("기본 프롬프트가 안 변했다 (한국어 분기)", got, "30a6d30e7b42086f")
+    # 8/27 **장면 지시를 넣었다 — 자막 길이로 갈린다.**
+    #   긴 영화(40분+)에만 「한 대목만 써라」가 붙는다. 긴 영화 둘에서 17:7(71%)로
+    #   이겼고, 22분 시트콤에서는 **1:11 로 졌다**(구간은 같은데 블록을 줄이고
+    #   대사를 밀어 넣어 과밀). 그래서 길이로 나눈다. AGENTS.md 실험 절 참조.
+    eq("기본 프롬프트가 안 변했다 (짧은 영화·한국어)", got, "1457b83a6e53032a")
     eq("기본에 들어간 변형이 없다", sg._SHIPPED, ())
     for _k in ("누가 말하는지 알게 해라", "대사를 잘게 끊어라"):
         check("실험 조항이 기본에 안 섞였다: %s" % _k, _k not in base)
@@ -560,6 +568,33 @@ def variant_tests():
           _with.strip().splitlines()[-1].startswith("추가 지시(최우선)"))
     for _k in ("한 이름으로만", "지식을 이름에", "처음 말하기 전에"):
         check("이름 규칙이 살아 있다: %s" % _k, _k in base)
+
+    # 장면 지시 — **자막 길이로 갈린다.** 짧은 영화에 걸면 과밀해져 1:11 로 진다.
+    check("짧은 영화에는 장면 지시를 안 건다", "한 대목만 써라" not in base)
+    _td = pathlib.Path(tempfile.mkdtemp())
+    _NL = chr(10)
+    try:
+        _long = _td / "long.srt"
+        _long.write_text(_NL.join(
+            "%d%s00:%02d:00,000 --> 00:%02d:02,000%s대사 %d%s"
+            % (i, _NL, i, i, _NL, i, _NL) for i in range(1, 60)), encoding="utf-8")
+        _p = sg.build_prompt(str(_long), "o.txt", 180)
+        check("긴 영화에는 장면 지시를 건다", "한 대목만 써라" in _p)
+        check("결말을 버려도 된다고 말해 준다", "결말을 쓰지 마라" in _p)
+        _ls = _p.strip().splitlines()
+        _n = next((k for k, ln in enumerate(_ls) if ln.startswith("**영화 전체를 훑지")), -1)
+        check("장면 블록도 맨 끝에 있다", _n >= 0 and _n >= len(_ls) - 11,
+              "%d / %d" % (_n, len(_ls)))
+        _nm = next((k for k, ln in enumerate(_ls) if ln.startswith("**이름 —")), -1)
+        check("이름 블록 다음에 온다", 0 <= _nm < _n)
+        _wx = sg.build_prompt(str(_long), "o.txt", 180, extra="잭 이야기만")
+        check("사용자 지시는 그보다도 뒤",
+              _wx.strip().splitlines()[-1].startswith("추가 지시(최우선)"))
+        eq("경계값 — 40분 미만은 안 건다",
+           sg._srt_minutes(str(_long)) >= sg.SCENE_MIN_MINUTES, True)
+    finally:
+        shutil.rmtree(_td, ignore_errors=True)
+    eq("자막을 못 읽으면 0분 — 장면 지시를 안 건다", sg._srt_minutes("없는파일.srt"), 0.0)
     check("변형을 안 주면 변형 코드가 안 돈다", sg.build_prompt(
         "x.srt", "o.txt", 180, variant=None) == base)
     for v in sg.VARIANTS:
