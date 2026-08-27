@@ -209,7 +209,13 @@ def pack_human(film):
     gold = json.loads((ROOT / "fixtures" / "narration_gold.json")
                       .read_text(encoding="utf-8"))
     want = {_norm(t): t for t in gold[film]["narrations"]}
-    cues = subtitle.parse_file(ROOT / "대본예시" / ("%s.srt" % film))[0]
+    # 유저분이 폴더를 바꾼다(8/27: `대본예시/` → `대본예시/내가적은대본/`).
+    # 경로를 박아 두면 그때 조용히 죽는다 — 이름으로 찾는다.
+    _hits = [q for q in (ROOT / "대본예시").rglob("%s.srt" % film)
+             if "원본자막" not in q.parts]
+    if not _hits:
+        raise FileNotFoundError("완성본을 못 찾았습니다: %s.srt" % film)
+    cues = subtitle.parse_file(_hits[0])[0]
     txt = [c["text"].replace(NL, " ").strip() for c in cues]
     out, i, used = [], 0, set()
     while i < len(txt):
