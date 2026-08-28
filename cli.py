@@ -386,12 +386,17 @@ def cmd_check(a):
         run_max = max([run_max] + [len(x) for x in s.split("D") if x])
     print("  구성: %s" % " ".join(shape))
     if nars:
-        # 문장력보다 이 비율이 자연스러움을 좌우한다 (내 대본 실측 5.3 / 7.7).
+        # 문장력보다 이 비율이 자연스러움을 좌우한다.
+        # **기준값을 8/27 에 정정했다.** 예전엔 「내 대본 5~8줄」이라고 적었는데
+        # 그건 완성본 3편만 보고 잰 값이었다. 유저분이 세 편을 더 준 뒤 6편을
+        # 전수로 재니 **4.8 · 7.7 · 10.1 · 10.5 · 24.3** 이고 `good doctor` 는
+        # 나레이션이 **한 줄도 없다**(71장 전부 대사). 중앙은 10.1 이다.
+        # 낡은 값이 도구의 5.0 을 「정상」이라고 안심시키고 있었다.
         per = st["dialogue"] / len(nars)
-        print("  대사 %.1f줄당 나레이션 1개  (내 대본 5~8줄)" % per)
+        print("  대사 %.1f줄당 나레이션 1개  (내 대본 4.8~24.3 · 중앙 10)" % per)
         if per < DLG_PER_NARR_MIN:
             warns.append(
-                "대사 %.1f줄마다 나레이션이 하나입니다 (내 대본은 5~8줄) — "
+                "대사 %.1f줄마다 나레이션이 하나입니다 (내 대본 4.8~24.3 · 중앙 10) — "
                 "나레이션이 대사를 밀어냅니다. 대사가 스스로 말하는 장면에서 "
                 "나레이션을 빼세요." % per)
     if n_blk:
@@ -518,6 +523,17 @@ def cmd_check(a):
     print("  컷 %d · 자막 %d · 음소거 구간 %d · 이어붙임 %d"
           % (ps["cuts"], ps["subs"], ps["muted"], ps["merged"]))
     print("  총 길이 %.1f초 (%.1f분)   목표 %.0f초" % (total, total / 60, a.seconds))
+
+    # 카드 리듬 — 길이 바로 밑에 둔다. 「초는 맞는데 카드가 없다」가 한눈에 읽힌다.
+    # 실제로 그랬다: 116.8초/목표 111초로 길이는 통과하면서 장당 2.05초였다.
+    _cm = quality.card_metrics(pl["subs"], total)
+    if _cm.get("n"):
+        print("  자막 한 장 %.1f초 · %.2f장/초  (내 대본 1.2~1.5초 · 0.65~0.82장/초)"
+              % (_cm["card_s"], _cm["per_s"]))
+    _ce, _cw, _cn = quality.card_issues(_cm)
+    errors += _ce
+    warns += _cw
+    notes += _cn
 
     delta = total - a.seconds
     if abs(delta) > a.seconds * LEN_TOL:

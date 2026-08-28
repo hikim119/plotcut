@@ -431,6 +431,7 @@ def dialogue_tests():
     candidates_tests()
     quota_tests()
     capcut_version_tests()
+    card_rhythm_tests()
     duel_tests()
     width_tests()
     nardur_tests()
@@ -1016,6 +1017,89 @@ def width_error_tests():
           'st.get("too_wide")' not in inspect.getsource(cli.cmd_check))
     check("pipeline 에도 없다 (파서 하나가 정본)",
           "too_wide" not in inspect.getsource(pipeline))
+
+
+def card_rhythm_tests():
+    """카드 리듬 — 줄을 나누면 자막 장이 늘고 **영상 길이는 안 변한다.** 자산 없이 돈다.
+
+    유저분이 「내가 적은 대본처럼 매끄럽지 않다」고 한 것의 정체다(8/27).
+    완성본은 자막 한 장이 1.22~1.54초인데 도구는 2.05초였다. 원인은 코드가
+    아니라 프롬프트 한 줄 — 외국어 경로의 「**한 문단 한 줄.** 247큐 중 246이
+    1줄이다」가 문단을 1줄로 고정시켜 대사 장/문단이 정확히 ×1.00 이 됐다
+    (6편 전수, 예외 0건). 그 근거는 **인과가 거꾸로**다: 「246이 1줄」은 완성본
+    **화면 카드**가 1줄이라는 뜻이고, 그건 긴 대사를 여러 장으로 쪼갠 **결과**다.
+    """
+    import script_gen as sg
+    import script_io as sio
+    import layout
+    import quality
+    import subtitle
+    print()
+    print("[37] 카드 리듬")
+    NL = chr(10)
+    td = pathlib.Path(tempfile.mkdtemp())
+    try:
+        srt = td / "x.srt"
+        srt.write_text(NL.join([
+            "1", "00:00:10,000 --> 00:00:13,000", "안녕 잘 지냈어 오늘 어때", "",
+            "2", "00:00:20,000 --> 00:00:23,000", "그래 뭐 그럭저럭이야", ""]),
+            encoding="utf-8")
+        cues, _ = subtitle.parse_file(str(srt))
+        head = "제목" + NL * 2 + "[00:00:09 ~ 00:00:24]" + NL * 2
+
+        def build(body):
+            doc = sio.read(head + body + NL, cues, log=lambda *_: None)
+            return layout.build(doc, cues, cues[-1]["end_s"] + 600,
+                                log=lambda *_: None)
+
+        one = build("@00:00:10.00~00:00:13.00 안녕 잘 지냈어 오늘 어때")
+        three = build("@00:00:10.00~00:00:13.00 안녕" + NL + "잘 지냈어" + NL + "오늘 어때")
+        eq("한 줄 문단은 자막 한 장", len(one["subs"]) - 1, 1)     # -1 은 제목
+        eq("세 줄 문단은 자막 세 장", len(three["subs"]) - 1, 3)
+        eq("줄을 나눠도 총 길이는 안 변한다",
+           round(one["total_s"], 2), round(three["total_s"], 2))
+        check("나눈 장이 원래보다 짧게 머문다",
+              max(x["t_dur"] for x in three["subs"] if x["kind"] == "dialogue")
+              < max(x["t_dur"] for x in one["subs"] if x["kind"] == "dialogue"))
+
+        # 판정 — 오래 머물면 ⚠, 정답 리듬이면 조용히
+        slow = quality.card_metrics(
+            [{"kind": "dialogue", "t_dur": 2.2} for _ in range(30)], 66.0)
+        fast = quality.card_metrics(
+            [{"kind": "dialogue", "t_dur": 1.3} for _ in range(30)], 39.0)
+        check("2.2초/장이면 ⚠", quality.card_issues(slow)[1])
+        check("1.3초/장이면 조용하다", not quality.card_issues(fast)[1])
+        eq("✘ 로는 안 올린다 (정답·도구가 겹친다)", quality.card_issues(slow)[0], [])
+        small = quality.card_metrics(
+            [{"kind": "dialogue", "t_dur": 9.0} for _ in range(3)], 27.0)
+        check("표본이 적으면 아무 말 안 한다", not quality.card_issues(small)[1])
+
+        # 프롬프트 — 되돌아오면 안 되는 문구.
+        # **자막이 영어여야 한다.** 「한 문단 한 줄」은 외국어 경로에만 있어서
+        # 한국어 자막으로 재면 그 줄이 애초에 프롬프트에 없다 — 검사가 헛돈다
+        # (실제로 첫 판이 그랬고 돌연변이가 통과했다).
+        en = td / "en.srt"
+        en.write_text(NL.join([
+            "1", "00:00:10,000 --> 00:00:13,000", "Hey how have you been", "",
+            "2", "00:00:20,000 --> 00:00:23,000", "Doing all right I guess", ""]),
+            encoding="utf-8")
+        pf = sg.build_prompt(str(en), "o.txt", 180)
+        check("외국어 분기를 실제로 재고 있다", "이 자막은 한국어가 아니다" in pf)
+        check("「한 문단 한 줄」이 프롬프트에 없다", "한 문단 한 줄" not in pf)
+        for _k in ("줄 하나가 화면 자막 한 장", "8~14자"):
+            check("줄 나누기 지시가 있다: %s" % _k, _k in pf)
+        ko = sg.build_prompt(str(srt), "o.txt", 180)
+        check("한국어 경로에도 줄 나누기 지시가 있다", "8~14자" in ko)
+        # 주석에는 「예전엔 5~8이라고 적었다」가 남아 있어야 한다(근거 기록).
+        # **찍히는 문자열**에만 없어야 한다.
+        _src = [l for l in (ROOT / "cli.py").read_text(encoding="utf-8").splitlines()
+                if not l.lstrip().startswith("#")]
+        check("낡은 기준값 「내 대본 5~8줄」을 더는 안 찍는다",
+              not any("내 대본 5~8줄" in l or "내 대본은 5~8줄" in l for l in _src))
+        check("정정된 기준값을 찍는다",
+              any("4.8~24.3" in l for l in _src))
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def capcut_version_tests():

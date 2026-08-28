@@ -183,6 +183,59 @@ def untranslated(line):
     return (not _HANGUL.search(line)) or len(_LATIN_WORD.findall(line)) >= 3
 
 
+# ── 카드 리듬 ───────────────────────────────────────────────────────────────
+# 자막 한 장이 화면에 얼마나 머무는가. 유저분이 「매끄럽지 않다」고 한 것의 정체다.
+#
+# 실측(8/27) — 완성본 srt 3편의 **자막 블록 수 ÷ 길이**:
+#   father 127장/155.4초 = 0.82장/초 (1.22초)
+#   gentleman 80/111.2 = 0.72 (1.39초) · robber 97/149.8 = 0.65 (1.54초)
+#   도구 45편 중앙 0.49장/초 (2.05초) · 대사 카드만 보면 2.22초
+#
+# 원인: 원본 큐가 2.07초/1.68줄인데 도구는 그 큐를 **한 장**으로 냈다.
+# 정답은 같은 큐를 두 장으로 나눠 1.2초씩 넘긴다.
+#
+# **✘ 가 아니라 ⚠ 다.** 저장소 규율(정답 최솟값 > 도구 최댓값)로 재니 겹친다 —
+# 정답 최소 0.648 vs 도구 최대 0.647. `quality.py` 가 예전에 「채택 밀도」를
+# 같은 이유로 뺀 것과 같은 자리다. 게다가 밀도가 좋다는 증거 자체가 약하다
+# (가진 표로 재니 6/9 · p≈0.25). 방향만 알려 주고 강제하지 않는다.
+CARD_S_MAX = 1.8        # 한 장이 이보다 오래 머물면 ⚠. 정답 1.22~1.54 ·
+                        # 도구 2.05. 중점 1.8 — 정답 최댓값 위, 도구 중앙 아래
+CARD_MIN_SAMPLE = 20    # 이 미만이면 안 잰다
+
+
+def card_metrics(subs, total_s):
+    """`layout.build` 의 `pl["subs"]` 와 `pl["total_s"]` 를 그대로 받는다.
+
+    화면 자막 한 장이 평균 몇 초 머무는가. `subs` 하나가 CapCut 자막 하나다
+    (`capcut_draft` 가 1:1 로 낸다) — 그래서 이게 곧 시청자가 보는 리듬이다.
+    """
+    n = len(subs or [])
+    if not n or not total_s:
+        return {"n": 0}
+    dlg = [x for x in subs if x.get("kind") == "dialogue"]
+    return {
+        "n": n,
+        "per_s": n / total_s,
+        "card_s": total_s / n,
+        "dlg_n": len(dlg),
+        "dlg_card_s": (sum(x["t_dur"] for x in dlg) / len(dlg)) if dlg else 0.0,
+    }
+
+
+def card_issues(m):
+    """→ (errors, warns, notes). ✘ 는 없다 — 위 주석 참고."""
+    errors, warns, notes = [], [], []
+    if m.get("n", 0) < CARD_MIN_SAMPLE:
+        return errors, warns, notes
+    if m["card_s"] > CARD_S_MAX:
+        warns.append(
+            "자막 한 장이 %.1f초씩 머뭅니다 (내 대본 1.2~1.5초) — 긴 대사를 "
+            "한 줄로 몰지 말고 **문단 안에서 8~14자로 줄을 나누세요.** 줄 하나가 "
+            "자막 한 장이 되고, 나눠도 영상 길이는 안 변합니다."
+            % m["card_s"])
+    return errors, warns, notes
+
+
 def dialogue_metrics(lines):
     """**사람이 한국어로 쓴 대사 줄** 문자열 리스트만 받는다 — 정답 248줄을
     그대로 넣어 테스트한다(`narration_metrics` 와 같은 규율).

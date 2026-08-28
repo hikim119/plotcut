@@ -471,6 +471,12 @@ def run_script(srt_path, out=None, project_name=None, target_s=180.0, extra="",
         log("  ⚠ " + w)
     log("  총 길이 %.1f초 (%.1f분) · 목표 %.0f초"
         % (pl["total_s"], pl["total_s"] / 60, target_s))
+    # 카드 리듬 — `cli check` 와 같은 판정을 GUI 경로에도 낸다. 여기 없으면
+    # 「GUI 로만 쓰는 사람은 이 신호를 영영 못 본다」가 된다.
+    import quality
+    _cm = quality.card_metrics(pl["subs"], pl["total_s"])
+    for _w in quality.card_issues(_cm)[1]:
+        log("  ⚠ " + _w)
 
     # 에이전트가 쓴 대본에는 시각이 없다. 한국어 자막이면 대사 텍스트로 다시
     # 찾을 수 있지만, 외국어 자막이면 `#763` 번호뿐이라 **자막 파일이 없으면
